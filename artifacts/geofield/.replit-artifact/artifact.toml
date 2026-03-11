@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "GeoField"
+version = "1.0.0"
+id = "artifacts/geofield"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+localPort = 20606
+name = "web"
+paths = ["/"]
+
+[services.development]
+run = "pnpm --filter @workspace/geofield run dev"
+
+[services.env]
+PORT = "20606"
+BASE_PATH = "/"
+
+[services.production]
+build = ["pnpm", "--filter", "@workspace/geofield", "run", "build"]
+publicDir = "artifacts/geofield/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"

@@ -1,0 +1,20 @@
+packages:
+  "react-hook-form": "For robust data-entry forms"
+  "@hookform/resolvers": "For Zod validation integration"
+  "zod": "For schema validation"
+  "papaparse": "For CSV export of complex sample data"
+  "@types/papaparse": "Types for papaparse"
+  "date-fns": "For formatting collection dates"
+  "framer-motion": "For smooth transitions between sample type forms"
+  "clsx": "Utility for constructing className strings"
+  "tailwind-merge": "Utility for merging tailwind classes"
+
+images:
+  - path: "artifacts/geofield/public/images/topo-bg.png"
+    description: "Subtle topographic map line pattern, light warm gray background with very faint darker gray contour lines, minimal, professional, abstract"
+    aspect_ratio: "16:9"
+
+notes:
+  - "App uses Replit Auth via API server cookies."
+  - "Using generated hooks from @workspace/api-client-react."
+  - "Sample 'fields' are stored as JSON in the database, schemas are enforced on the frontend."
