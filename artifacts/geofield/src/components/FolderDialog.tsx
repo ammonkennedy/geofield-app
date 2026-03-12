@@ -49,13 +49,13 @@ export function FolderDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogHeader>
-        <DialogTitle>{folder ? "Edit Folder" : "Create New Folder"}</DialogTitle>
+        <DialogTitle>{folder ? "Edit Dataset" : "Create New Dataset"}</DialogTitle>
         <DialogClose onClick={() => onOpenChange(false)} />
       </DialogHeader>
       <DialogContent>
         <form onSubmit={handleSubmit} className="space-y-4 pt-4">
           <div className="space-y-2">
-            <Label htmlFor="name">Folder Name</Label>
+            <Label htmlFor="name">Dataset Name</Label>
             <Input 
               id="name" 
               value={name} 
@@ -78,7 +78,7 @@ export function FolderDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={isPending || !name.trim()}>
-              {isPending ? "Saving..." : folder ? "Save Changes" : "Create Folder"}
+              {isPending ? "Saving..." : folder ? "Save Changes" : "Create Dataset"}
             </Button>
           </div>
         </form>

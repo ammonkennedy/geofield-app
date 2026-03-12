@@ -10,7 +10,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const { data: authData } = useGetCurrentAuthUser();
   const { data: folders } = useGetFolders();
-  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [datasetDialogOpen, setDatasetDialogOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const user = authData?.user;
@@ -68,11 +68,11 @@ export function Layout({ children }: { children: ReactNode }) {
             </nav>
           </div>
 
-          {/* Folders */}
+          {/* Datasets */}
           <div className="px-4">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Folders</h3>
-              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setFolderDialogOpen(true)}>
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Datasets</h3>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setDatasetDialogOpen(true)}>
                 <Plus className="w-4 h-4" />
               </Button>
             </div>
@@ -80,10 +80,10 @@ export function Layout({ children }: { children: ReactNode }) {
               {folders?.map(folder => (
                 <Link
                   key={folder.id}
-                  href={`/folder/${folder.id}`}
+                  href={`/dataset/${folder.id}`}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 group",
-                    location === `/folder/${folder.id}`
+                    location === `/dataset/${folder.id}`
                       ? "bg-primary text-primary-foreground font-medium shadow-md"
                       : "text-foreground hover:bg-muted font-medium"
                   )}
@@ -91,11 +91,11 @@ export function Layout({ children }: { children: ReactNode }) {
                 >
                   <FolderOpen className="w-4 h-4 opacity-80" />
                   <span className="truncate flex-1">{folder.name}</span>
-                  {location === `/folder/${folder.id}` && <ChevronRight className="w-4 h-4" />}
+                  {location === `/dataset/${folder.id}` && <ChevronRight className="w-4 h-4" />}
                 </Link>
               ))}
               {folders?.length === 0 && (
-                <p className="text-xs text-muted-foreground italic px-3 py-2">No folders yet</p>
+                <p className="text-xs text-muted-foreground italic px-3 py-2">No datasets yet</p>
               )}
             </nav>
           </div>
@@ -131,8 +131,8 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
       </main>
 
-      {/* Folder Dialog */}
-      <FolderDialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen} />
+      {/* Dataset Dialog */}
+      <FolderDialog open={datasetDialogOpen} onOpenChange={setDatasetDialogOpen} />
 
       {/* Mobile overlay */}
       {sidebarOpen && (

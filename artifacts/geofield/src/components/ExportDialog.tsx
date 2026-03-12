@@ -70,7 +70,7 @@ export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
               onClick={() => setSelected("all")}
             />
 
-            {/* Folders */}
+            {/* Datasets */}
             {folders?.map(folder => (
               <OptionRow
                 key={folder.id}

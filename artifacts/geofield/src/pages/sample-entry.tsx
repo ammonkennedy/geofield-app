@@ -347,7 +347,7 @@ export default function SampleEntry() {
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
-                  <Label htmlFor="folderId">Folder (Optional)</Label>
+                  <Label htmlFor="folderId">Dataset (Optional)</Label>
                   <select
                     id="folderId"
                     className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Layout } from "@/components/Layout";
 import { useGetSamples, useGetFolders } from "@workspace/api-client-react";
-import { MapPin, FolderOpen, Layers } from "lucide-react";
+import { MapPin, FolderOpen, AlertCircle } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 
 const typeColors: Record<string, string> = {
@@ -16,9 +16,16 @@ const typeLabels: Record<string, string> = {
   soil_sand: "Soil/Sand",
 };
 
-function parseCoords(location: string | undefined): [number, number] | null {
-  if (!location || typeof location !== "string") return null;
-  const match = location.match(/(-?\d+\.?\d*)[,\s]+(-?\d+\.?\d*)/);
+// Robust coordinate parser — handles strings, numbers, and various formats
+function parseCoords(rawLocation: any): [number, number] | null {
+  if (rawLocation === null || rawLocation === undefined || rawLocation === "") return null;
+
+  const str = String(rawLocation).trim();
+  if (!str) return null;
+
+  // Pattern: two numbers separated by comma, space, or both
+  // Handles: "40.7128, -74.006" / "40.7128 -74.006" / "40.7128,-74.006"
+  const match = str.match(/^(-?\d+\.?\d*)[,\s]+(-?\d+\.?\d*)$/);
   if (match) {
     const lat = parseFloat(match[1]);
     const lng = parseFloat(match[2]);
@@ -26,6 +33,17 @@ function parseCoords(location: string | undefined): [number, number] | null {
       return [lat, lng];
     }
   }
+
+  // Fallback: find any two numbers in the string
+  const nums = str.match(/-?\d+\.?\d*/g);
+  if (nums && nums.length >= 2) {
+    const lat = parseFloat(nums[0]);
+    const lng = parseFloat(nums[1]);
+    if (!isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return [lat, lng];
+    }
+  }
+
   return null;
 }
 
@@ -56,6 +74,10 @@ export default function MapViewPage() {
 
   const samplesWithCoords = filteredSamples.filter(s =>
     parseCoords((s.fields as any)?.location) !== null
+  );
+
+  const samplesWithoutCoords = filteredSamples.filter(s =>
+    parseCoords((s.fields as any)?.location) === null
   );
 
   // Create map once on mount
@@ -89,7 +111,7 @@ export default function MapViewPage() {
     };
   }, []);
 
-  // Update markers whenever samples or folder filter changes
+  // Update markers whenever samples or dataset filter changes
   useEffect(() => {
     if (!mapRef.current) return;
 
@@ -147,17 +169,17 @@ export default function MapViewPage() {
 
   return (
     <Layout>
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
         <div>
           <h1 className="text-3xl font-bold font-display flex items-center gap-3">
             <MapPin className="text-primary w-8 h-8" />
             Sample Map
           </h1>
           <p className="text-muted-foreground mt-1">
-            {samplesWithCoords.length} sample{samplesWithCoords.length !== 1 ? "s" : ""} with GPS coordinates
+            {samplesWithCoords.length} sample{samplesWithCoords.length !== 1 ? "s" : ""} plotted
             {selectedFolderId !== "all" && folders && (
               <span className="ml-1">
-                in <strong>{folders.find(f => f.id === selectedFolderId)?.name}</strong>
+                from <strong>{folders.find(f => f.id === selectedFolderId)?.name}</strong>
               </span>
             )}
           </p>
@@ -174,7 +196,7 @@ export default function MapViewPage() {
             ))}
           </div>
 
-          {/* Folder filter */}
+          {/* Dataset filter */}
           <div className="relative">
             <select
               className="flex items-center gap-2 pl-8 pr-4 h-9 rounded-lg border border-border bg-card text-sm font-medium shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/20 appearance-none"
@@ -183,7 +205,7 @@ export default function MapViewPage() {
                 setSelectedFolderId(e.target.value === "all" ? "all" : Number(e.target.value))
               }
             >
-              <option value="all">All Folders</option>
+              <option value="all">All Datasets</option>
               {folders?.map(f => (
                 <option key={f.id} value={f.id}>{f.name}</option>
               ))}
@@ -193,20 +215,25 @@ export default function MapViewPage() {
         </div>
       </div>
 
-      {samplesWithCoords.length === 0 && allSamples && allSamples.length > 0 ? (
-        <div className="flex flex-col items-center justify-center h-96 text-center border-2 border-dashed border-border rounded-2xl">
-          <MapPin className="w-12 h-12 text-muted-foreground mb-4" />
-          <h3 className="text-xl font-semibold">No GPS data in this selection</h3>
-          <p className="text-muted-foreground mt-2 max-w-sm">
-            None of the samples in this folder have GPS coordinates recorded.
-          </p>
+      {/* Warning for samples missing GPS */}
+      {samplesWithoutCoords.length > 0 && (
+        <div className="flex items-start gap-2.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 text-sm mb-4">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            <strong>{samplesWithoutCoords.length} sample{samplesWithoutCoords.length !== 1 ? "s" : ""} not shown</strong>
+            {" "}— no parseable GPS coordinates:{" "}
+            {samplesWithoutCoords.map(s => s.sampleId).join(", ")}.
+            {" "}Edit those samples and enter coordinates as <em>lat, lng</em> (e.g. 40.7128, -74.0060).
+          </span>
         </div>
-      ) : samplesWithCoords.length === 0 ? (
+      )}
+
+      {samplesWithCoords.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-96 text-center border-2 border-dashed border-border rounded-2xl">
           <MapPin className="w-12 h-12 text-muted-foreground mb-4" />
-          <h3 className="text-xl font-semibold">No GPS data yet</h3>
+          <h3 className="text-xl font-semibold">No GPS data to display</h3>
           <p className="text-muted-foreground mt-2 max-w-sm">
-            Create a new sample and allow location access to start plotting on the map.
+            Enter coordinates in the <em>lat, lng</em> format on each sample to see them here.
           </p>
         </div>
       ) : null}
@@ -215,8 +242,8 @@ export default function MapViewPage() {
         ref={mapContainerRef}
         className="w-full rounded-2xl overflow-hidden border border-border shadow-lg"
         style={{
-          height: "calc(100vh - 240px)",
-          minHeight: "400px",
+          height: "calc(100vh - 280px)",
+          minHeight: "380px",
           display: samplesWithCoords.length === 0 ? "none" : "block",
         }}
       />

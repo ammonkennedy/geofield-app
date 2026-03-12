@@ -33,7 +33,7 @@ function Router() {
       <Route path="/">
         <ProtectedRoute component={Dashboard} />
       </Route>
-      <Route path="/folder/:folderId">
+      <Route path="/dataset/:folderId">
         <ProtectedRoute component={Dashboard} />
       </Route>
       <Route path="/map">

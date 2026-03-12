@@ -41,7 +41,7 @@ export default function Dashboard() {
   ) || [];
 
   const handleDeleteFolder = () => {
-    if (activeFolder && confirm("Are you sure you want to delete this folder? Samples will become uncategorized.")) {
+    if (activeFolder && confirm("Are you sure you want to delete this dataset? Samples will become uncategorized.")) {
       deleteFolder.mutate({ id: activeFolder.id }, {
         onSuccess: () => setLocation("/")
       });
@@ -68,7 +68,7 @@ export default function Dashboard() {
         <div className="flex flex-wrap items-center gap-3">
           {activeFolder && (
             <Button variant="outline" className="text-destructive border-destructive/20 hover:bg-destructive/10" onClick={handleDeleteFolder}>
-              Delete Folder
+              Delete Dataset
             </Button>
           )}
           <Button variant="secondary" onClick={() => setExportOpen(true)}>
