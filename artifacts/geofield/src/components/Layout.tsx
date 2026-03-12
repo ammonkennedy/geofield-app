@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useGetCurrentAuthUser, useGetFolders } from "@workspace/api-client-react";
 import { Button } from "./ui/button";
 import { FolderDialog } from "./FolderDialog";
-import { Pickaxe, FolderOpen, MapPin, LogOut, ChevronRight, Menu, Plus } from "lucide-react";
+import { Pickaxe, FolderOpen, MapPin, LogOut, ChevronRight, Menu, Plus, Map } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -39,11 +39,12 @@ export function Layout({ children }: { children: ReactNode }) {
         </div>
 
         <div className="flex-1 overflow-y-auto py-6 flex flex-col gap-6">
+          {/* Main Nav */}
           <div className="px-4">
-            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Menu</h3>
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Views</h3>
             <nav className="space-y-1">
-              <Link 
-                href="/" 
+              <Link
+                href="/"
                 className={cn(
                   "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
                   location === "/" ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"
@@ -53,9 +54,21 @@ export function Layout({ children }: { children: ReactNode }) {
                 <MapPin className="w-4 h-4" />
                 All Samples
               </Link>
+              <Link
+                href="/map"
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
+                  location === "/map" ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"
+                )}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <Map className="w-4 h-4" />
+                Map View
+              </Link>
             </nav>
           </div>
 
+          {/* Folders */}
           <div className="px-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Folders</h3>
@@ -65,13 +78,13 @@ export function Layout({ children }: { children: ReactNode }) {
             </div>
             <nav className="space-y-1">
               {folders?.map(folder => (
-                <Link 
+                <Link
                   key={folder.id}
                   href={`/folder/${folder.id}`}
                   className={cn(
                     "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 group",
-                    location === `/folder/${folder.id}` 
-                      ? "bg-primary text-primary-foreground font-medium shadow-md" 
+                    location === `/folder/${folder.id}`
+                      ? "bg-primary text-primary-foreground font-medium shadow-md"
                       : "text-foreground hover:bg-muted font-medium"
                   )}
                   onClick={() => setSidebarOpen(false)}
@@ -88,6 +101,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
         </div>
 
+        {/* User footer */}
         <div className="p-4 border-t border-border/50 bg-card mt-auto">
           {user ? (
             <div className="flex items-center gap-3">
@@ -119,10 +133,10 @@ export function Layout({ children }: { children: ReactNode }) {
 
       {/* Folder Dialog */}
       <FolderDialog open={folderDialogOpen} onOpenChange={setFolderDialogOpen} />
-      
+
       {/* Mobile overlay */}
       {sidebarOpen && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/50 z-30 md:hidden backdrop-blur-sm"
           onClick={() => setSidebarOpen(false)}
         />

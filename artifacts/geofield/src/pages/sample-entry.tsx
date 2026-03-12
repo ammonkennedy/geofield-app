@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation, useParams } from "wouter";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -8,7 +8,7 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Droplet, Mountain, Sprout, ArrowLeft, Save } from "lucide-react";
+import { Droplet, Mountain, Sprout, ArrowLeft, Save, Camera, X, MapPin, Loader2 } from "lucide-react";
 import { useSamplesMutations } from "@/hooks/use-geofield";
 import { useGetFolders, useGetSample } from "@workspace/api-client-react";
 import { BaseFields, WaterFields, RockFields, SoilFields } from "@/components/fields/SchemaForms";
@@ -31,16 +31,22 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
+type GpsStatus = "idle" | "loading" | "success" | "error" | "denied";
+
 export default function SampleEntry() {
   const [, setLocation] = useLocation();
   const { id } = useParams();
   const isEdit = Boolean(id && id !== "new");
-  
-  const { data: existingSample, isLoading: loadingSample } = useGetSample(Number(id), { 
-    query: { enabled: isEdit } 
+
+  const { data: existingSample, isLoading: loadingSample } = useGetSample(Number(id), {
+    query: { enabled: isEdit }
   });
   const { data: folders } = useGetFolders();
   const { createSample, updateSample } = useSamplesMutations();
+
+  const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -53,14 +59,40 @@ export default function SampleEntry() {
     }
   });
 
+  // Auto-capture GPS on new sample
+  useEffect(() => {
+    if (isEdit) return;
+    if (!navigator.geolocation) {
+      setGpsStatus("error");
+      return;
+    }
+    setGpsStatus("loading");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = pos.coords.latitude.toFixed(6);
+        const lng = pos.coords.longitude.toFixed(6);
+        setValue("fields.location", `${lat}, ${lng}`);
+        setGpsStatus("success");
+      },
+      (err) => {
+        setGpsStatus(err.code === 1 ? "denied" : "error");
+      },
+      { timeout: 10000, maximumAge: 60000 }
+    );
+  }, [isEdit, setValue]);
+
   useEffect(() => {
     if (existingSample && isEdit) {
+      const fields = existingSample.fields as Record<string, any> || {};
+      if (fields.photo) {
+        setPhotoDataUrl(fields.photo);
+      }
       reset({
         sampleType: existingSample.sampleType as any,
         sampleId: existingSample.sampleId,
         folderId: existingSample.folderId ? String(existingSample.folderId) : '',
         notes: existingSample.notes || '',
-        fields: existingSample.fields || {}
+        fields: { ...fields, photo: undefined }
       });
     }
   }, [existingSample, isEdit, reset]);
@@ -68,14 +100,27 @@ export default function SampleEntry() {
   const currentType = watch("sampleType");
   const isPending = createSample.isPending || updateSample.isPending;
 
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setPhotoDataUrl(ev.target?.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const onSubmit = (data: FormValues) => {
-    // Process form data to ensure correct types (numbers instead of strings where possible)
     const processedFields: Record<string, any> = {};
     Object.entries(data.fields).forEach(([k, v]) => {
-      if (v === "") return; // Skip empty
+      if (v === "") return;
       const num = Number(v);
       processedFields[k] = !isNaN(num) && typeof v === 'string' && v.trim() !== '' ? num : v;
     });
+
+    if (photoDataUrl) {
+      processedFields.photo = photoDataUrl;
+    }
 
     const payload = {
       sampleType: data.sampleType,
@@ -96,7 +141,15 @@ export default function SampleEntry() {
     }
   };
 
-  if (isEdit && loadingSample) return <Layout><div className="animate-pulse flex space-x-4"><div className="flex-1 space-y-6 py-1"><div className="h-2 bg-slate-200 rounded"></div><div className="space-y-3"><div className="grid grid-cols-3 gap-4"><div className="h-2 bg-slate-200 rounded col-span-2"></div><div className="h-2 bg-slate-200 rounded col-span-1"></div></div><div className="h-2 bg-slate-200 rounded"></div></div></div></div></Layout>;
+  if (isEdit && loadingSample) return (
+    <Layout>
+      <div className="animate-pulse space-y-4">
+        <div className="h-8 bg-muted rounded w-48" />
+        <div className="h-48 bg-muted rounded" />
+        <div className="h-96 bg-muted rounded" />
+      </div>
+    </Layout>
+  );
 
   return (
     <Layout>
@@ -111,7 +164,7 @@ export default function SampleEntry() {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-8 pb-20">
-        
+
         {/* Type Selection */}
         <div className="space-y-3">
           <Label className="text-base">Sample Type</Label>
@@ -144,16 +197,39 @@ export default function SampleEntry() {
         {/* Dynamic Form Area */}
         <Card className="overflow-hidden shadow-lg border-border/50">
           <div className="p-6 md:p-8 space-y-8 bg-gradient-to-b from-card to-muted/20">
-            <BaseFields register={register} errors={errors} />
+
+            {/* Section 1: Base Fields with GPS indicator */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-display font-semibold flex items-center gap-2">
+                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm">1</span>
+                Basic Information
+                {/* GPS Status indicator */}
+                {!isEdit && (
+                  <span className={cn(
+                    "ml-2 inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium",
+                    gpsStatus === "loading" && "bg-yellow-100 text-yellow-700",
+                    gpsStatus === "success" && "bg-green-100 text-green-700",
+                    gpsStatus === "error" || gpsStatus === "denied" ? "bg-red-100 text-red-600" : "",
+                    gpsStatus === "idle" && "bg-muted text-muted-foreground",
+                  )}>
+                    {gpsStatus === "loading" && <><Loader2 className="w-3 h-3 animate-spin" /> Getting GPS...</>}
+                    {gpsStatus === "success" && <><MapPin className="w-3 h-3" /> GPS captured</>}
+                    {gpsStatus === "denied" && <><MapPin className="w-3 h-3" /> Location denied</>}
+                    {gpsStatus === "error" && <><MapPin className="w-3 h-3" /> GPS unavailable</>}
+                  </span>
+                )}
+              </h3>
+              <BaseFields register={register} errors={errors} />
+            </div>
 
             <div className="h-px bg-border/60 w-full" />
-            
+
+            {/* Section 2: Type-specific parameters */}
             <div className="space-y-4">
               <h3 className="text-lg font-display font-semibold flex items-center gap-2">
                 <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm">2</span>
                 Parameters
               </h3>
-              
               <AnimatePresence mode="wait">
                 <motion.div
                   key={currentType}
@@ -171,27 +247,95 @@ export default function SampleEntry() {
 
             <div className="h-px bg-border/60 w-full" />
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-2">
-                <Label htmlFor="folderId">Organization Folder (Optional)</Label>
-                <select 
-                  id="folderId"
-                  className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
-                  {...register("folderId")}
-                >
-                  <option value="">Uncategorized</option>
-                  {folders?.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                </select>
+            {/* Section 3: Photo */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-display font-semibold flex items-center gap-2">
+                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm">3</span>
+                Sample Photo
+              </h3>
+
+              <div className="flex flex-col sm:flex-row gap-4 items-start">
+                {photoDataUrl ? (
+                  <div className="relative group">
+                    <img
+                      src={photoDataUrl}
+                      alt="Sample"
+                      className="w-40 h-40 object-cover rounded-xl border border-border shadow-md"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setPhotoDataUrl(null)}
+                      className="absolute -top-2 -right-2 bg-destructive text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    className="w-40 h-40 rounded-xl border-2 border-dashed border-border bg-muted/30 flex flex-col items-center justify-center gap-2 text-muted-foreground cursor-pointer hover:border-primary/40 hover:bg-muted/50 transition-colors"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Camera className="w-8 h-8" />
+                    <span className="text-xs text-center px-2">Tap to add photo</span>
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={handlePhotoChange}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Camera className="w-4 h-4" />
+                    {photoDataUrl ? "Replace Photo" : "Take / Upload Photo"}
+                  </Button>
+                  <p className="text-xs text-muted-foreground max-w-xs">
+                    On mobile, this will open your camera directly. On desktop, you can upload an existing image.
+                  </p>
+                </div>
               </div>
-              
-              <div className="space-y-2 md:col-span-2">
-                <Label htmlFor="notes">Field Notes</Label>
-                <Textarea 
-                  id="notes" 
-                  placeholder="Additional observations, weather conditions, context..." 
-                  className="min-h-[120px]"
-                  {...register("notes")} 
-                />
+            </div>
+
+            <div className="h-px bg-border/60 w-full" />
+
+            {/* Section 4: Folder & Notes */}
+            <div className="space-y-4">
+              <h3 className="text-lg font-display font-semibold flex items-center gap-2">
+                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm">4</span>
+                Organization
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-2">
+                  <Label htmlFor="folderId">Folder (Optional)</Label>
+                  <select
+                    id="folderId"
+                    className="flex h-10 w-full rounded-md border border-input bg-card px-3 py-2 text-sm"
+                    {...register("folderId")}
+                  >
+                    <option value="">Uncategorized</option>
+                    {folders?.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                  </select>
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="notes">Field Notes</Label>
+                  <Textarea
+                    id="notes"
+                    placeholder="Additional observations, weather conditions, context..."
+                    className="min-h-[120px]"
+                    {...register("notes")}
+                  />
+                </div>
               </div>
             </div>
 
