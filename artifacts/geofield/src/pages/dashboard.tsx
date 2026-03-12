@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Download, Search, Edit2, Trash2, FolderOpen, MapPin, Calendar } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { exportSamplesToCSV } from "@/lib/export";
 import { useSamplesMutations, useFoldersMutations } from "@/hooks/use-geofield";
+import { ExportDialog } from "@/components/ExportDialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 
 const typeStyles = {
@@ -27,6 +27,7 @@ export default function Dashboard() {
   
   const [searchTerm, setSearchTerm] = useState("");
   const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
   
   const { deleteSample } = useSamplesMutations();
   const { deleteFolder } = useFoldersMutations();
@@ -38,12 +39,6 @@ export default function Dashboard() {
     (s.notes && s.notes.toLowerCase().includes(searchTerm.toLowerCase())) ||
     (s.fields?.location && String(s.fields.location).toLowerCase().includes(searchTerm.toLowerCase()))
   ) || [];
-
-  const handleExport = () => {
-    if (filteredSamples.length) {
-      exportSamplesToCSV(filteredSamples, activeFolder ? `geofield-${activeFolder.name}` : 'geofield-all');
-    }
-  };
 
   const handleDeleteFolder = () => {
     if (activeFolder && confirm("Are you sure you want to delete this folder? Samples will become uncategorized.")) {
@@ -76,9 +71,9 @@ export default function Dashboard() {
               Delete Folder
             </Button>
           )}
-          <Button variant="secondary" onClick={handleExport} disabled={!filteredSamples.length}>
+          <Button variant="secondary" onClick={() => setExportOpen(true)}>
             <Download className="w-4 h-4 mr-2" />
-            Export CSV
+            Export Excel
           </Button>
           <Button onClick={() => setLocation("/sample/new")}>
             <Plus className="w-4 h-4 mr-2" />
@@ -171,6 +166,8 @@ export default function Dashboard() {
           })}
         </div>
       )}
+
+      <ExportDialog open={exportOpen} onOpenChange={setExportOpen} />
 
       <Dialog open={deleteId !== null} onOpenChange={(o) => !o && setDeleteId(null)}>
         <DialogHeader>
