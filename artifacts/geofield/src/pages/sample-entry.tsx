@@ -12,6 +12,7 @@ import { Droplet, Mountain, Sprout, ArrowLeft, Save, Camera, X, MapPin, Loader2 
 import { useSamplesMutations } from "@/hooks/use-geofield";
 import { useGetFolders, useGetSample } from "@workspace/api-client-react";
 import { BaseFields, WaterFields, RockFields, SoilFields } from "@/components/fields/SchemaForms";
+import { CompassModal } from "@/components/CompassModal";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -46,6 +47,7 @@ export default function SampleEntry() {
 
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
+  const [compassOpen, setCompassOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<FormValues>({
@@ -59,13 +61,18 @@ export default function SampleEntry() {
     }
   });
 
-  // Auto-capture GPS on new sample
+  // Auto-fill date+time and GPS on new sample
   useEffect(() => {
     if (isEdit) return;
-    if (!navigator.geolocation) {
-      setGpsStatus("error");
-      return;
-    }
+    // Set current datetime
+    const now = new Date();
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16);
+    setValue("fields.collectionDate", local);
+
+    // Auto GPS
+    if (!navigator.geolocation) { setGpsStatus("error"); return; }
     setGpsStatus("loading");
     navigator.geolocation.getCurrentPosition(
       (pos) => {
@@ -74,9 +81,7 @@ export default function SampleEntry() {
         setValue("fields.location", `${lat}, ${lng}`);
         setGpsStatus("success");
       },
-      (err) => {
-        setGpsStatus(err.code === 1 ? "denied" : "error");
-      },
+      (err) => { setGpsStatus(err.code === 1 ? "denied" : "error"); },
       { timeout: 10000, maximumAge: 60000 }
     );
   }, [isEdit, setValue]);
@@ -265,7 +270,7 @@ export default function SampleEntry() {
                   transition={{ duration: 0.2 }}
                 >
                   {currentType === 'water' && <WaterFields register={register} />}
-                  {currentType === 'rock' && <RockFields register={register} />}
+                  {currentType === 'rock' && <RockFields register={register} onOpenCompass={() => setCompassOpen(true)} />}
                   {currentType === 'soil_sand' && <SoilFields register={register} />}
                 </motion.div>
               </AnimatePresence>
@@ -378,6 +383,15 @@ export default function SampleEntry() {
           </Button>
         </div>
       </form>
+
+      <CompassModal
+        open={compassOpen}
+        onClose={() => setCompassOpen(false)}
+        onCapture={(strike, dip) => {
+          setValue("fields.strike", strike);
+          setValue("fields.dip", dip);
+        }}
+      />
     </Layout>
   );
 }

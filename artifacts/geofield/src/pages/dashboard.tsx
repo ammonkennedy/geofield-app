@@ -9,7 +9,6 @@ import { Plus, Download, Search, Edit2, Trash2, FolderOpen, MapPin, Calendar } f
 import { Input } from "@/components/ui/input";
 import { exportSamplesToCSV } from "@/lib/export";
 import { useSamplesMutations, useFoldersMutations } from "@/hooks/use-geofield";
-import { formatDate } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 
 const typeStyles = {
@@ -120,7 +119,8 @@ export default function Dashboard() {
           {filteredSamples.map(sample => {
             const style = typeStyles[sample.sampleType as keyof typeof typeStyles] || typeStyles.rock;
             const folder = folders?.find(f => f.id === sample.folderId);
-            const date = sample.fields?.collectionDate as string || sample.createdAt;
+            const rawDate = sample.fields?.collectionDate as string || sample.createdAt;
+            const date = rawDate ? new Date(rawDate).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "";
             const locationStr = sample.fields?.location as string;
 
             return (
@@ -141,7 +141,7 @@ export default function Dashboard() {
                   <div className="space-y-3 mt-4">
                     <div className="flex items-center gap-2 text-sm text-foreground/80">
                       <Calendar className="w-4 h-4 text-muted-foreground" />
-                      {formatDate(date)}
+                      {date}
                     </div>
                     {locationStr && (
                       <div className="flex items-start gap-2 text-sm text-foreground/80">
