@@ -130,12 +130,14 @@ export default function MapViewPage() {
   const [terrain, setTerrain] = useState(true);
   const [geoInfo, setGeoInfo] = useState<GeoInfo | null>(null);
 
-  // Road cameras state
+  // Park cameras state
   const [camsEnabled, setCamsEnabled] = useState(false);
   const [cameras, setCameras] = useState<RoadCam[]>([]);
   const [camsLoading, setCamsLoading] = useState(false);
   const [selectedCam, setSelectedCam] = useState<RoadCam | null>(null);
-  const camMarkersRef = useRef<any[]>([]);
+  // Keyed by camera ID so we can diff additions/removals without clearing everything
+  const camMarkersMapRef = useRef<Map<string, any>>(new Map());
+  const moveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { data: allSamples } = useGetSamples();
   const { data: folders } = useGetFolders();
@@ -159,7 +161,7 @@ export default function MapViewPage() {
     overlayLayerRef.current = overlayLayer;
   }, [overlayLayer]);
 
-  // ── ROAD CAMERAS ──────────────────────────────────────────────────────────
+  // ── PARK CAMERAS ──────────────────────────────────────────────────────────
   const fetchCameras = useCallback(async () => {
     if (!mapRef.current) return;
     const bounds = mapRef.current.getBounds();
@@ -178,16 +180,30 @@ export default function MapViewPage() {
     }
   }, []);
 
-  // Place / clear camera markers whenever cameras list changes or cams toggled off
+  // Diff-update markers: only add new ones and remove stale ones — never wipe everything
   useEffect(() => {
     import("maplibre-gl").then((L) => {
-      // Clear old cam markers
-      camMarkersRef.current.forEach((m) => m.remove());
-      camMarkersRef.current = [];
+      if (!camsEnabled || !mapRef.current) {
+        camMarkersMapRef.current.forEach((m) => m.remove());
+        camMarkersMapRef.current.clear();
+        return;
+      }
 
-      if (!camsEnabled || !mapRef.current) return;
+      const incomingIds = new Set(cameras.map((c) => c.id));
+      const existingIds = new Set(camMarkersMapRef.current.keys());
 
+      // Remove markers that are no longer in the fetched set
+      existingIds.forEach((id) => {
+        if (!incomingIds.has(id)) {
+          camMarkersMapRef.current.get(id)?.remove();
+          camMarkersMapRef.current.delete(id);
+        }
+      });
+
+      // Add markers only for cameras that don't already have one
       cameras.forEach((cam) => {
+        if (camMarkersMapRef.current.has(cam.id)) return;
+
         const el = document.createElement("div");
         el.style.cssText = [
           "width:28px;height:28px;border-radius:50%;",
@@ -197,32 +213,39 @@ export default function MapViewPage() {
           "cursor:pointer;transition:transform 0.1s;",
         ].join("");
         el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>`;
-        el.title = cam.name;
+        el.title = cam.title;
         el.addEventListener("mouseenter", () => { el.style.transform = "scale(1.2)"; });
         el.addEventListener("mouseleave", () => { el.style.transform = "scale(1)"; });
         el.addEventListener("click", (e) => { e.stopPropagation(); setSelectedCam(cam); });
 
         const marker = new L.Marker({ element: el }).setLngLat([cam.lng, cam.lat]).addTo(mapRef.current);
-        camMarkersRef.current.push(marker);
+        camMarkersMapRef.current.set(cam.id, marker);
       });
     });
   }, [cameras, camsEnabled]);
 
-  // Fetch cameras when enabled and re-fetch on map moveend
+  // Toggle: when disabled clean up; when enabled do first fetch + debounced moveend re-fetch
   useEffect(() => {
     if (!camsEnabled) {
-      camMarkersRef.current.forEach((m) => m.remove());
-      camMarkersRef.current = [];
+      if (moveDebounceRef.current) clearTimeout(moveDebounceRef.current);
+      camMarkersMapRef.current.forEach((m) => m.remove());
+      camMarkersMapRef.current.clear();
       setCameras([]);
       setSelectedCam(null);
       return;
     }
     fetchCameras();
 
-    const handleMoveEnd = () => fetchCameras();
+    const handleMoveEnd = () => {
+      if (moveDebounceRef.current) clearTimeout(moveDebounceRef.current);
+      moveDebounceRef.current = setTimeout(() => fetchCameras(), 600);
+    };
     const map = mapRef.current;
     if (map) map.on("moveend", handleMoveEnd);
-    return () => { if (map) map.off("moveend", handleMoveEnd); };
+    return () => {
+      if (moveDebounceRef.current) clearTimeout(moveDebounceRef.current);
+      if (map) map.off("moveend", handleMoveEnd);
+    };
   }, [camsEnabled, fetchCameras]);
 
   // ── INITIALIZE MAP ONCE ───────────────────────────────────────────────────
