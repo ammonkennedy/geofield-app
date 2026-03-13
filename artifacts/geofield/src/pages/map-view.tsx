@@ -316,9 +316,16 @@ export default function MapViewPage() {
       const dateStr = (sample.fields as any)?.collectionDate
         ? new Date((sample.fields as any).collectionDate).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
         : "";
-      const photoHtml = (sample.fields as any)?.photo
-        ? `<img src="${(sample.fields as any).photo}" style="width:100%;height:80px;object-fit:cover;border-radius:6px;margin-bottom:8px;"/>`
-        : "";
+      // Show only the first media slot in the popup
+      const fields = sample.fields as any;
+      const firstMedia = Array.isArray(fields?.media) ? fields.media[0] : null;
+      const photoHtml = firstMedia?.type === "video"
+        ? `<video src="${firstMedia.dataUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:6px;margin-bottom:8px;border:none;" muted playsinline controls></video>`
+        : firstMedia?.type === "photo"
+          ? `<img src="${firstMedia.dataUrl}" style="width:100%;height:80px;object-fit:cover;border-radius:6px;margin-bottom:8px;"/>`
+          : fields?.photo
+            ? `<img src="${fields.photo}" style="width:100%;height:80px;object-fit:cover;border-radius:6px;margin-bottom:8px;"/>`
+            : "";
 
       const el = document.createElement("div");
       el.innerHTML = `<div style="background:${color};color:white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);width:34px;height:34px;border:2.5px solid white;box-shadow:0 3px 10px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;cursor:pointer;"><span style="transform:rotate(45deg);font-size:14px;font-weight:700;">${letter}</span></div>`;

@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Droplet, Mountain, Sprout, ArrowLeft, Save, Camera, X, MapPin, Loader2, Plus, GripVertical, Mic, MicOff } from "lucide-react";
+import { Droplet, Mountain, Sprout, ArrowLeft, Save, Camera, X, MapPin, Loader2, Plus, GripVertical, Mic, MicOff, Video, Image } from "lucide-react";
 import { useSamplesMutations } from "@/hooks/use-geofield";
 import { useGetFolders, useGetSample } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
@@ -55,13 +55,15 @@ export default function SampleEntry() {
   const { data: folders } = useGetFolders();
   const { createSample, updateSample } = useSamplesMutations();
 
-  const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
+  type MediaSlot = { type: "photo"; dataUrl: string } | { type: "video"; dataUrl: string } | null;
+  const [mediaSlots, setMediaSlots] = useState<[MediaSlot, MediaSlot, MediaSlot]>([null, null, null]);
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
   const [compassOpen, setCompassOpen] = useState(false);
   const [customParams, setCustomParams] = useState<CustomParam[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeSlotRef = useRef<number>(0);
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -96,7 +98,16 @@ export default function SampleEntry() {
   useEffect(() => {
     if (existingSample && isEdit) {
       const fields = existingSample.fields as Record<string, any> || {};
-      if (fields.photo) setPhotoDataUrl(fields.photo);
+      // Support new media array format and legacy single photo
+      if (Array.isArray(fields.media)) {
+        const loaded = (fields.media as any[]).slice(0, 3).map((m: any) =>
+          m && m.type && m.dataUrl ? { type: m.type as "photo" | "video", dataUrl: m.dataUrl } : null
+        );
+        while (loaded.length < 3) loaded.push(null);
+        setMediaSlots(loaded as [MediaSlot, MediaSlot, MediaSlot]);
+      } else if (fields.photo) {
+        setMediaSlots([{ type: "photo", dataUrl: fields.photo }, null, null]);
+      }
       // Load saved custom params
       if (Array.isArray(fields.customParams)) {
         setCustomParams(
@@ -112,7 +123,7 @@ export default function SampleEntry() {
         sampleId: existingSample.sampleId,
         folderId: existingSample.folderId ? String(existingSample.folderId) : '',
         notes: existingSample.notes || '',
-        fields: { ...fields, photo: undefined, customParams: undefined },
+        fields: { ...fields, photo: undefined, media: undefined, customParams: undefined },
       });
     }
   }, [existingSample, isEdit, reset]);
@@ -143,17 +154,56 @@ export default function SampleEntry() {
     });
   };
 
-  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMediaChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    try {
-      setPhotoDataUrl(await compressImage(file));
-    } catch {
-      const reader = new FileReader();
-      reader.onload = (ev) => setPhotoDataUrl(ev.target?.result as string);
-      reader.readAsDataURL(file);
+    e.target.value = "";
+    const slotIndex = activeSlotRef.current;
+    const setSlot = (slot: MediaSlot) =>
+      setMediaSlots((prev) => {
+        const next = [...prev] as [MediaSlot, MediaSlot, MediaSlot];
+        next[slotIndex] = slot;
+        return next;
+      });
+
+    if (file.type.startsWith("video/")) {
+      const url = URL.createObjectURL(file);
+      const vid = document.createElement("video");
+      vid.preload = "metadata";
+      vid.src = url;
+      vid.onloadedmetadata = () => {
+        URL.revokeObjectURL(url);
+        if (vid.duration > 10) {
+          toast({ title: "Video too long", description: "Please choose a clip that is 10 seconds or shorter." });
+          return;
+        }
+        const reader = new FileReader();
+        reader.onload = (ev) => setSlot({ type: "video", dataUrl: ev.target?.result as string });
+        reader.readAsDataURL(file);
+      };
+      vid.onerror = () => { URL.revokeObjectURL(url); toast({ title: "Could not read video", description: "Try a different format (MP4 recommended)." }); };
+    } else {
+      try {
+        setSlot({ type: "photo", dataUrl: await compressImage(file) });
+      } catch {
+        const reader = new FileReader();
+        reader.onload = (ev) => setSlot({ type: "photo", dataUrl: ev.target?.result as string });
+        reader.readAsDataURL(file);
+      }
     }
   };
+
+  const openSlot = (index: number) => {
+    activeSlotRef.current = index;
+    fileInputRef.current?.click();
+  };
+
+  const clearSlot = (index: number) =>
+    setMediaSlots((prev) => {
+      const next = [...prev] as [MediaSlot, MediaSlot, MediaSlot];
+      next[index] = null;
+      return next;
+    });
 
   // Voice recognition for field notes
   const toggleRecording = () => {
@@ -205,7 +255,13 @@ export default function SampleEntry() {
       const num = Number(v);
       processedFields[k] = !isNaN(num) && typeof v === "string" && v.trim() !== "" ? num : v;
     });
-    if (photoDataUrl) processedFields.photo = photoDataUrl;
+    // Save media slots; also keep legacy `photo` key for map popup backward compat
+    const filledSlots = mediaSlots.some(Boolean);
+    if (filledSlots) {
+      processedFields.media = mediaSlots;
+      const firstPhoto = mediaSlots.find((m) => m?.type === "photo");
+      if (firstPhoto) processedFields.photo = firstPhoto.dataUrl;
+    }
 
     // Include non-empty custom parameters
     const nonEmptyParams = customParams.filter((p) => p.label.trim());
@@ -416,56 +472,90 @@ export default function SampleEntry() {
 
             <div className="h-px bg-border/60 w-full" />
 
-            {/* Section 4: Photo */}
+            {/* Section 4: Photos & Video */}
             <div className="space-y-4">
               <h3 className="text-lg font-display font-semibold flex items-center gap-2">
                 <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">4</span>
-                Sample Photo
+                Photos &amp; Video
               </h3>
-              <div className="flex flex-col sm:flex-row gap-4 items-start">
-                {photoDataUrl ? (
-                  <div className="relative group">
-                    <img src={photoDataUrl} alt="Sample" className="w-40 h-40 object-cover rounded-xl border border-border shadow-md" />
-                    <button
-                      type="button"
-                      onClick={() => setPhotoDataUrl(null)}
-                      className="absolute -top-2 -right-2 bg-destructive text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <div
-                    className="w-40 h-40 rounded-xl border-2 border-dashed border-border bg-muted/30 flex flex-col items-center justify-center gap-2 text-muted-foreground cursor-pointer hover:border-primary/40 hover:bg-muted/50 transition-colors"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <Camera className="w-8 h-8" />
-                    <span className="text-xs text-center px-2">Tap to add photo</span>
-                  </div>
-                )}
-                <div className="flex flex-col gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={handlePhotoChange}
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="gap-2"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <Camera className="w-4 h-4" />
-                    {photoDataUrl ? "Replace Photo" : "Take / Upload Photo"}
-                  </Button>
-                  <p className="text-xs text-muted-foreground max-w-xs">
-                    On mobile, this will open your camera directly. On desktop, you can upload an existing image.
-                  </p>
-                </div>
+              <p className="text-xs text-muted-foreground -mt-1">
+                Up to 3 slots — each can be a photo or a short video clip (max 10 seconds). On mobile the camera opens directly.
+              </p>
+
+              {/* Hidden single file input shared by all slots */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*,video/*"
+                className="hidden"
+                onChange={handleMediaChange}
+              />
+
+              <div className="flex flex-wrap gap-3">
+                {([0, 1, 2] as const).map((i) => {
+                  const slot = mediaSlots[i];
+                  const label = i === 0 ? "Primary" : i === 1 ? "Secondary" : "Additional";
+                  return (
+                    <div key={i} className="flex flex-col items-center gap-1.5">
+                      <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</span>
+                      <div className="relative group">
+                        {slot ? (
+                          <>
+                            {slot.type === "photo" ? (
+                              <img
+                                src={slot.dataUrl}
+                                alt={`Sample photo ${i + 1}`}
+                                className="w-36 h-36 object-cover rounded-xl border border-border shadow-md cursor-pointer"
+                                onClick={() => openSlot(i)}
+                              />
+                            ) : (
+                              <video
+                                src={slot.dataUrl}
+                                className="w-36 h-36 object-cover rounded-xl border border-border shadow-md cursor-pointer bg-black"
+                                controls
+                                playsInline
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            )}
+                            {/* Type badge */}
+                            <span className="absolute bottom-1.5 left-1.5 bg-black/60 text-white text-[10px] font-semibold rounded px-1.5 py-0.5 flex items-center gap-1 pointer-events-none">
+                              {slot.type === "photo" ? <Image className="w-2.5 h-2.5" /> : <Video className="w-2.5 h-2.5" />}
+                              {slot.type === "photo" ? "Photo" : "Video"}
+                            </span>
+                            {/* Clear button */}
+                            <button
+                              type="button"
+                              onClick={() => clearSlot(i)}
+                              className="absolute -top-2 -right-2 bg-destructive text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                            {/* Replace overlay on photo */}
+                            {slot.type === "photo" && (
+                              <div
+                                className="absolute inset-0 rounded-xl bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-pointer"
+                                onClick={() => openSlot(i)}
+                              >
+                                <Camera className="w-6 h-6 text-white" />
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div
+                            className="w-36 h-36 rounded-xl border-2 border-dashed border-border bg-muted/30 flex flex-col items-center justify-center gap-2 text-muted-foreground cursor-pointer hover:border-primary/40 hover:bg-muted/50 transition-colors"
+                            onClick={() => openSlot(i)}
+                          >
+                            <div className="flex gap-2">
+                              <Camera className="w-5 h-5" />
+                              <Video className="w-5 h-5" />
+                            </div>
+                            <span className="text-[11px] text-center px-2 leading-tight">Tap to add<br />photo or video</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
