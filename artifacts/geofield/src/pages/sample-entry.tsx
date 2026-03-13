@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Droplet, Mountain, Sprout, ArrowLeft, Save, Camera, X, MapPin, Loader2, Plus, GripVertical } from "lucide-react";
+import { Droplet, Mountain, Sprout, ArrowLeft, Save, Camera, X, MapPin, Loader2, Plus, GripVertical, Mic, MicOff } from "lucide-react";
 import { useSamplesMutations } from "@/hooks/use-geofield";
 import { useGetFolders, useGetSample } from "@workspace/api-client-react";
 import { BaseFields, WaterFields, RockFields, SoilFields } from "@/components/fields/SchemaForms";
@@ -56,6 +56,8 @@ export default function SampleEntry() {
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
   const [compassOpen, setCompassOpen] = useState(false);
   const [customParams, setCustomParams] = useState<CustomParam[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<FormValues>({
@@ -148,6 +150,38 @@ export default function SampleEntry() {
       reader.onload = (ev) => setPhotoDataUrl(ev.target?.result as string);
       reader.readAsDataURL(file);
     }
+  };
+
+  // Voice recognition for field notes
+  const toggleRecording = () => {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      alert("Speech recognition is not supported in this browser. Try Chrome or Safari on iOS.");
+      return;
+    }
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+    recognition.onresult = (event: any) => {
+      const transcript = Array.from(event.results as SpeechRecognitionResultList)
+        .slice(event.resultIndex)
+        .map((r: SpeechRecognitionResult) => r[0].transcript)
+        .join(" ");
+      const current = (document.getElementById("notes") as HTMLTextAreaElement)?.value ?? "";
+      const joined = current ? `${current.trimEnd()} ${transcript.trim()}` : transcript.trim();
+      setValue("notes", joined);
+    };
+    recognition.onerror = () => setIsRecording(false);
+    recognition.onend = () => setIsRecording(false);
+    recognition.start();
+    recognitionRef.current = recognition;
+    setIsRecording(true);
   };
 
   // Custom param helpers
@@ -444,10 +478,33 @@ export default function SampleEntry() {
                   </select>
                 </div>
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="notes">Field Notes</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="notes">Field Notes</Label>
+                    <button
+                      type="button"
+                      onClick={toggleRecording}
+                      title={isRecording ? "Stop recording" : "Dictate field notes"}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all",
+                        isRecording
+                          ? "bg-red-500 text-white border-red-500 animate-pulse"
+                          : "bg-card border-border text-muted-foreground hover:text-foreground hover:border-primary/50"
+                      )}
+                    >
+                      {isRecording
+                        ? <><MicOff className="w-3.5 h-3.5" /> Stop</>
+                        : <><Mic className="w-3.5 h-3.5" /> Dictate</>}
+                    </button>
+                  </div>
+                  {isRecording && (
+                    <p className="text-xs text-red-500 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-red-500 animate-ping inline-block" />
+                      Listening… speak your field notes now.
+                    </p>
+                  )}
                   <Textarea
                     id="notes"
-                    placeholder="Additional observations, weather conditions, context..."
+                    placeholder="Additional observations, weather conditions, context... or click Dictate to speak."
                     className="min-h-[120px]"
                     {...register("notes")}
                   />

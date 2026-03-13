@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
 import {
   BarChart,
   Bar,
@@ -180,6 +180,8 @@ export function DatasetFigures({ samples, datasetName }: { samples: Sample[]; da
   const [open, setOpen] = useState(false);
   const [selectedParam, setSelectedParam] = useState<string>("");
   const [chartType, setChartType] = useState<ChartType>("bar");
+  const [isDownloading, setIsDownloading] = useState(false);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
 
   const availableParams = useMemo(() => {
     return Object.entries(NUMERIC_PARAMS).filter(([key]) =>
@@ -209,6 +211,65 @@ export function DatasetFigures({ samples, datasetName }: { samples: Sample[]; da
   }, [samples, selectedParam]);
 
   const paramMeta = selectedParam ? NUMERIC_PARAMS[selectedParam] : null;
+
+  const downloadChart = () => {
+    if (!chartContainerRef.current || !paramMeta) return;
+    const svg = chartContainerRef.current.querySelector("svg");
+    if (!svg) return;
+    setIsDownloading(true);
+
+    const bbox = svg.getBoundingClientRect();
+    const scale = 2;
+    const W = bbox.width;
+    const H = bbox.height;
+    const HEADER = 56; // extra pixels for title row above chart
+
+    const canvas = document.createElement("canvas");
+    canvas.width = (W + 32) * scale;
+    canvas.height = (H + HEADER + 16) * scale;
+    const ctx = canvas.getContext("2d")!;
+    ctx.scale(scale, scale);
+
+    // White background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, W + 32, H + HEADER + 16);
+
+    // Title text
+    const title = `${paramMeta.label}${paramMeta.unit ? ` (${paramMeta.unit})` : ""}`;
+    const subtitle = `${chartData.length} sample${chartData.length !== 1 ? "s" : ""}${datasetName ? ` — ${datasetName}` : ""}`;
+    ctx.fillStyle = "#111";
+    ctx.font = "bold 14px system-ui, sans-serif";
+    ctx.fillText(title, 16, 22);
+    ctx.fillStyle = "#666";
+    ctx.font = "11px system-ui, sans-serif";
+    ctx.fillText(subtitle, 16, 40);
+    if (stats) {
+      const statsStr = `Min: ${stats.min}  Avg: ${stats.avg}  Max: ${stats.max}  n=${stats.n}`;
+      ctx.textAlign = "right";
+      ctx.fillText(statsStr, W + 16, 40);
+      ctx.textAlign = "left";
+    }
+
+    // Draw SVG onto canvas
+    const svgClone = svg.cloneNode(true) as SVGSVGElement;
+    svgClone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    const svgData = new XMLSerializer().serializeToString(svgClone);
+    const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+    img.onload = () => {
+      ctx.drawImage(img, 16, HEADER, W, H);
+      URL.revokeObjectURL(url);
+      const fname = `${(datasetName || "dataset").replace(/[^a-zA-Z0-9]/g, "_")}_${paramMeta.label.replace(/[^a-zA-Z0-9]/g, "_")}_${chartType}.png`;
+      const a = document.createElement("a");
+      a.download = fname;
+      a.href = canvas.toDataURL("image/png");
+      a.click();
+      setIsDownloading(false);
+    };
+    img.onerror = () => setIsDownloading(false);
+    img.src = url;
+  };
 
   const stats = useMemo(() => {
     if (!chartData.length) return null;
@@ -301,9 +362,9 @@ export function DatasetFigures({ samples, datasetName }: { samples: Sample[]; da
 
                 {/* Chart */}
                 {selectedParam && chartData.length > 0 ? (
-                  <div className="bg-muted/30 rounded-2xl p-4 border border-border">
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
+                  <div className="bg-muted/30 rounded-2xl p-4 border border-border" ref={chartContainerRef}>
+                    <div className="flex items-start justify-between mb-2 gap-3">
+                      <div className="min-w-0">
                         <h3 className="font-semibold text-base">
                           {paramMeta?.label}{paramMeta?.unit ? ` (${paramMeta.unit})` : ""}
                         </h3>
@@ -312,14 +373,26 @@ export function DatasetFigures({ samples, datasetName }: { samples: Sample[]; da
                           {datasetName ? ` in ${datasetName}` : ""}
                         </p>
                       </div>
-                      {stats && (
-                        <div className="flex gap-4 text-center text-xs">
-                          <div><p className="text-muted-foreground">Min</p><p className="font-semibold">{stats.min}</p></div>
-                          <div><p className="text-muted-foreground">Avg</p><p className="font-semibold">{stats.avg}</p></div>
-                          <div><p className="text-muted-foreground">Max</p><p className="font-semibold">{stats.max}</p></div>
-                          <div><p className="text-muted-foreground">n</p><p className="font-semibold">{stats.n}</p></div>
-                        </div>
-                      )}
+                      <div className="flex items-start gap-4">
+                        {stats && (
+                          <div className="flex gap-4 text-center text-xs">
+                            <div><p className="text-muted-foreground">Min</p><p className="font-semibold">{stats.min}</p></div>
+                            <div><p className="text-muted-foreground">Avg</p><p className="font-semibold">{stats.avg}</p></div>
+                            <div><p className="text-muted-foreground">Max</p><p className="font-semibold">{stats.max}</p></div>
+                            <div><p className="text-muted-foreground">n</p><p className="font-semibold">{stats.n}</p></div>
+                          </div>
+                        )}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1.5 shrink-0"
+                          onClick={downloadChart}
+                          disabled={isDownloading}
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          {isDownloading ? "Saving..." : "Download PNG"}
+                        </Button>
+                      </div>
                     </div>
 
                     {chartType === "bar" && (

@@ -149,6 +149,13 @@ export default function TripPlannerPage() {
                   type: "raster" as const,
                   tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
                   tileSize: 256,
+                  attribution: "© Esri — Maxar, Earthstar Geographics",
+                },
+                // Reference layer: state/country lines, city names, mountain labels, roads
+                labels: {
+                  type: "raster" as const,
+                  tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+                  tileSize: 256,
                   attribution: "© Esri",
                 },
                 terrain: {
@@ -159,7 +166,10 @@ export default function TripPlannerPage() {
                   encoding: "terrarium" as const,
                 },
               },
-              layers: [{ id: "satellite", type: "raster" as const, source: "satellite" }],
+              layers: [
+                { id: "satellite", type: "raster" as const, source: "satellite" },
+                { id: "labels",    type: "raster" as const, source: "labels"    },
+              ],
               terrain: { source: "terrain", exaggeration: 1.3 },
             },
             center: [-98.35, 39.5],
