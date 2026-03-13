@@ -65,4 +65,54 @@ proxyRouter.get("/proxy/soil", async (req, res) => {
   }
 });
 
+// Road camera proxy — fetches 511NY camera list, filters active cameras with live HLS streams
+// and returns a bbox-filtered subset to avoid sending all 1500+ cameras to the client.
+let roadCamCache: { data: any[]; fetchedAt: number } | null = null;
+const CAM_CACHE_TTL = 5 * 60 * 1000; // 5 min
+
+proxyRouter.get("/proxy/roadcams", async (req, res) => {
+  const { minLat, maxLat, minLng, maxLng } = req.query as Record<string, string>;
+
+  try {
+    // Refresh cache if stale
+    if (!roadCamCache || Date.now() - roadCamCache.fetchedAt > CAM_CACHE_TTL) {
+      const r = await fetch(
+        "https://511ny.org/api/getcameras?key=&format=json&lang=en",
+        { headers: { Accept: "application/json" } }
+      );
+      if (!r.ok) throw new Error("511NY upstream error");
+      const raw = (await r.json()) as any[];
+      roadCamCache = {
+        fetchedAt: Date.now(),
+        data: raw
+          .filter((c) => !c.Disabled && !c.Blocked && c.VideoUrl && c.Latitude && c.Longitude)
+          .map((c) => ({
+            id: c.ID as string,
+            name: c.Name as string,
+            road: c.RoadwayName as string,
+            direction: c.DirectionOfTravel as string,
+            lat: c.Latitude as number,
+            lng: c.Longitude as number,
+            videoUrl: c.VideoUrl as string,
+          })),
+      };
+    }
+
+    let cameras = roadCamCache.data;
+
+    // Spatial filter if bbox provided
+    if (minLat && maxLat && minLng && maxLng) {
+      const [mn_lat, mx_lat, mn_lng, mx_lng] = [minLat, maxLat, minLng, maxLng].map(Number);
+      cameras = cameras.filter(
+        (c) => c.lat >= mn_lat && c.lat <= mx_lat && c.lng >= mn_lng && c.lng <= mx_lng
+      );
+    }
+
+    // Cap at 200 cameras per request
+    return res.json({ cameras: cameras.slice(0, 200), source: "511ny", total: cameras.length });
+  } catch (err) {
+    return res.status(502).json({ error: "Failed to fetch road camera data" });
+  }
+});
+
 export default proxyRouter;

@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Layout } from "@/components/Layout";
 import { useGetSamples, useGetFolders } from "@workspace/api-client-react";
-import { MapPin, FolderOpen, AlertCircle, Layers, Satellite, Map, Mountain } from "lucide-react";
+import { MapPin, FolderOpen, AlertCircle, Layers, Satellite, Map, Mountain, Camera } from "lucide-react";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { RoadCamPanel, type RoadCam } from "@/components/RoadCamPanel";
 
 const TYPE_COLORS: Record<string, string> = {
   water: "#2d7dd2",
@@ -129,6 +130,13 @@ export default function MapViewPage() {
   const [terrain, setTerrain] = useState(true);
   const [geoInfo, setGeoInfo] = useState<GeoInfo | null>(null);
 
+  // Road cameras state
+  const [camsEnabled, setCamsEnabled] = useState(false);
+  const [cameras, setCameras] = useState<RoadCam[]>([]);
+  const [camsLoading, setCamsLoading] = useState(false);
+  const [selectedCam, setSelectedCam] = useState<RoadCam | null>(null);
+  const camMarkersRef = useRef<any[]>([]);
+
   const { data: allSamples } = useGetSamples();
   const { data: folders } = useGetFolders();
 
@@ -150,6 +158,72 @@ export default function MapViewPage() {
   useEffect(() => {
     overlayLayerRef.current = overlayLayer;
   }, [overlayLayer]);
+
+  // ── ROAD CAMERAS ──────────────────────────────────────────────────────────
+  const fetchCameras = useCallback(async () => {
+    if (!mapRef.current) return;
+    const bounds = mapRef.current.getBounds();
+    const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+    setCamsLoading(true);
+    try {
+      const r = await fetch(
+        `${base}/api/proxy/roadcams?minLat=${bounds.getSouth()}&maxLat=${bounds.getNorth()}&minLng=${bounds.getWest()}&maxLng=${bounds.getEast()}`
+      );
+      const d = await r.json();
+      setCameras(d.cameras ?? []);
+    } catch {
+      setCameras([]);
+    } finally {
+      setCamsLoading(false);
+    }
+  }, []);
+
+  // Place / clear camera markers whenever cameras list changes or cams toggled off
+  useEffect(() => {
+    import("maplibre-gl").then((L) => {
+      // Clear old cam markers
+      camMarkersRef.current.forEach((m) => m.remove());
+      camMarkersRef.current = [];
+
+      if (!camsEnabled || !mapRef.current) return;
+
+      cameras.forEach((cam) => {
+        const el = document.createElement("div");
+        el.style.cssText = [
+          "width:28px;height:28px;border-radius:50%;",
+          "background:#1d4ed8;border:2px solid white;",
+          "box-shadow:0 2px 8px rgba(0,0,0,0.4);",
+          "display:flex;align-items:center;justify-content:center;",
+          "cursor:pointer;transition:transform 0.1s;",
+        ].join("");
+        el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>`;
+        el.title = cam.name;
+        el.addEventListener("mouseenter", () => { el.style.transform = "scale(1.2)"; });
+        el.addEventListener("mouseleave", () => { el.style.transform = "scale(1)"; });
+        el.addEventListener("click", (e) => { e.stopPropagation(); setSelectedCam(cam); });
+
+        const marker = new L.Marker({ element: el }).setLngLat([cam.lng, cam.lat]).addTo(mapRef.current);
+        camMarkersRef.current.push(marker);
+      });
+    });
+  }, [cameras, camsEnabled]);
+
+  // Fetch cameras when enabled and re-fetch on map moveend
+  useEffect(() => {
+    if (!camsEnabled) {
+      camMarkersRef.current.forEach((m) => m.remove());
+      camMarkersRef.current = [];
+      setCameras([]);
+      setSelectedCam(null);
+      return;
+    }
+    fetchCameras();
+
+    const handleMoveEnd = () => fetchCameras();
+    const map = mapRef.current;
+    if (map) map.on("moveend", handleMoveEnd);
+    return () => { if (map) map.off("moveend", handleMoveEnd); };
+  }, [camsEnabled, fetchCameras]);
 
   // ── INITIALIZE MAP ONCE ───────────────────────────────────────────────────
   useEffect(() => {
@@ -448,6 +522,20 @@ export default function MapViewPage() {
             <Layers className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
           </div>
 
+          {/* Road Cameras toggle */}
+          <button
+            onClick={() => setCamsEnabled((v) => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all shadow-sm ${
+              camsEnabled
+                ? "bg-blue-600 text-white border-blue-600"
+                : "bg-card border-border text-muted-foreground hover:text-foreground"
+            }`}
+            title="Toggle live road cameras (New York state)"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            {camsLoading ? "Loading…" : `Road Cams${camsEnabled && cameras.length > 0 ? ` (${cameras.length})` : ""}`}
+          </button>
+
           {/* Legend */}
           <div className="flex gap-3 ml-auto flex-wrap">
             {Object.entries(TYPE_COLORS).map(([type, color]) => (
@@ -465,6 +553,16 @@ export default function MapViewPage() {
             {overlayLayer === "geology"
               ? "Click anywhere to get rock formation and geological age data."
               : "Click anywhere to get soil classification data (USDA SSURGO, US coverage only)."}
+          </div>
+        )}
+        {camsEnabled && (
+          <div className="text-xs text-muted-foreground bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex items-center gap-2">
+            <Camera className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <span>
+              <strong className="text-blue-700">{cameras.length > 0 ? `${cameras.length} live cameras` : "No cameras"}</strong>
+              {cameras.length > 0 ? " in this view — click a blue pin to watch the stream." : " in the current view."}
+              {" "}Coverage: New York state (511NY · NYSDOT).
+            </span>
           </div>
         )}
 
@@ -513,7 +611,12 @@ export default function MapViewPage() {
             )}
           </div>
         )}
-        <div ref={mapContainerRef} className="flex-1 rounded-2xl overflow-hidden border border-border shadow-lg" />
+        <div className="flex-1 relative">
+          <div ref={mapContainerRef} className="w-full h-full rounded-2xl overflow-hidden border border-border shadow-lg" />
+          {selectedCam && (
+            <RoadCamPanel cam={selectedCam} onClose={() => setSelectedCam(null)} />
+          )}
+        </div>
       </div>
     </Layout>
   );
