@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useLocation, useParams } from "wouter";
 import {
   MapPin, Plus, Trash2, Save, Map, X, Navigation, Edit3, Bookmark,
+  Layers, Satellite, Mountain,
 } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,46 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import "maplibre-gl/dist/maplibre-gl.css";
 
+// ── Types ──────────────────────────────────────────────────────────────────────
+type BaseLayer    = "street" | "satellite";
+type OverlayLayer = "none" | "geology" | "soil" | "trails";
+
+const GEO_TILES    = "https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png";
+const TRAILS_TILES = "https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png";
+const SOIL_WMS     =
+  "https://maps.isric.org/mapserv?map=/map/wrb.map&SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=image%2Fpng&TRANSPARENT=TRUE&LAYERS=MostProbable&WIDTH=256&HEIGHT=256&CRS=EPSG%3A3857&BBOX={bbox-epsg-3857}";
+
+function safeRemoveOverlays(map: any) {
+  for (const id of ["geology-overlay", "soil-overlay", "trails-overlay"]) {
+    try { if (map.getLayer(id)) map.removeLayer(id); } catch {}
+  }
+  for (const id of ["geology", "soil", "trails-src"]) {
+    try { if (map.getSource(id)) map.removeSource(id); } catch {}
+  }
+}
+
+function safeAddOverlay(map: any, overlay: OverlayLayer) {
+  try {
+    if (overlay === "geology") {
+      map.addSource("geology", { type: "raster", tiles: [GEO_TILES], tileSize: 256, attribution: "© Macrostrat" });
+      map.addLayer({ id: "geology-overlay", type: "raster", source: "geology", paint: { "raster-opacity": 0.65 } }, "labels");
+    } else if (overlay === "soil") {
+      map.addSource("soil", { type: "raster", tiles: [SOIL_WMS], tileSize: 256, attribution: "© ISRIC" });
+      map.addLayer({ id: "soil-overlay", type: "raster", source: "soil", paint: { "raster-opacity": 0.65 } }, "labels");
+    } else if (overlay === "trails") {
+      map.addSource("trails-src", {
+        type: "raster",
+        tiles: [TRAILS_TILES],
+        tileSize: 256,
+        attribution: "© <a href='https://www.waymarkedtrails.org'>Waymarked Trails</a>, © OpenStreetMap contributors",
+        minzoom: 5,
+      });
+      map.addLayer({ id: "trails-overlay", type: "raster", source: "trails-src", paint: { "raster-opacity": 0.9 } }, "labels");
+    }
+  } catch {}
+}
+
+// ── Trip data types ───────────────────────────────────────────────────────────
 export interface PlannedSite {
   id: string;
   name: string;
@@ -42,9 +83,58 @@ export function saveTrips(trips: Trip[]) {
   window.dispatchEvent(new CustomEvent("trips-updated"));
 }
 
-const MAP_MODAL_HEIGHT = "85vh";
-const MAP_HEADER_PX = 88; // approximate header height in px
+const MAP_MODAL_HEIGHT = "90vh";
 
+// ── Initial map style (mirrors map-view.tsx) ──────────────────────────────────
+const TRIP_MAP_STYLE: any = {
+  version: 8,
+  sources: {
+    satellite: {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      attribution: "© Esri — Maxar, Earthstar Geographics",
+      maxzoom: 18,
+    },
+    street: {
+      type: "raster",
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      attribution: "© OpenStreetMap contributors",
+      maxzoom: 19,
+    },
+    labels: {
+      type: "raster",
+      tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      attribution: "© Esri",
+    },
+    terrain: {
+      type: "raster-dem",
+      tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+      tileSize: 256,
+      maxzoom: 15,
+      encoding: "terrarium",
+    },
+  },
+  layers: [
+    { id: "satellite-layer", type: "raster", source: "satellite", layout: { visibility: "visible" } },
+    { id: "street-layer",    type: "raster", source: "street",    layout: { visibility: "none"    } },
+    // overlays inserted dynamically before "labels"
+    { id: "labels",          type: "raster", source: "labels",    layout: { visibility: "visible" } },
+  ],
+  terrain: { source: "terrain", exaggeration: 1.5 },
+  sky: {
+    "sky-color": "#87CEEB",
+    "sky-horizon-blend": 0.5,
+    "horizon-color": "#f9f5e4",
+    "horizon-fog-blend": 0.5,
+    "fog-color": "#f9f5e4",
+    "fog-ground-blend": 0.5,
+  },
+};
+
+// ── Component ──────────────────────────────────────────────────────────────────
 export default function TripPlannerPage() {
   const { tripId } = useParams<{ tripId: string }>();
   const [, setLocation] = useLocation();
@@ -52,16 +142,25 @@ export default function TripPlannerPage() {
   const [mapOpen, setMapOpen] = useState(false);
   const [saveFlash, setSaveFlash] = useState(false);
 
-  // Map state (managed here so the container div is always in our control)
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<any>(null);
-  const mapMarkersRef = useRef<any[]>([]);
-  const mapLoadedRef = useRef(false);
-  const [showTrails, setShowTrails] = useState(false);
-  const showTrailsRef = useRef(false);
-  const [pendingCoords, setPendingCoords] = useState<[number, number] | null>(null);
+  // Map layer state
+  const [baseLayer,    setBaseLayer]    = useState<BaseLayer>("satellite");
+  const [terrain,      setTerrain]      = useState(true);
+  const [overlayLayer, setOverlayLayer] = useState<OverlayLayer>("none");
+
+  // Map refs
+  const mapContainerRef  = useRef<HTMLDivElement>(null);
+  const mapInstanceRef   = useRef<any>(null);
+  const mapMarkersRef    = useRef<any[]>([]);
+  const mapLoadedRef     = useRef(false);
+  const overlayLayerRef  = useRef<OverlayLayer>("none");
+
+  // Site form state
+  const [pendingCoords,   setPendingCoords]   = useState<[number, number] | null>(null);
   const [pendingSiteName, setPendingSiteName] = useState("");
   const [pendingSiteDesc, setPendingSiteDesc] = useState("");
+
+  // Keep overlayLayerRef in sync
+  useEffect(() => { overlayLayerRef.current = overlayLayer; }, [overlayLayer]);
 
   // Create a new trip when navigating to /trip/new
   useEffect(() => {
@@ -119,10 +218,9 @@ export default function TripPlannerPage() {
     updateTrip({ sites: activeTrip.sites.filter((s) => s.id !== id) });
   };
 
-  // ── Map lifecycle: init when mapOpen=true, destroy when false ──────────────
+  // ── Map lifecycle: init when mapOpen=true, destroy when false ─────────────
   useEffect(() => {
     if (!mapOpen) {
-      // Destroy the map when modal closes
       mapMarkersRef.current.forEach((m) => { try { m.remove(); } catch {} });
       mapMarkersRef.current = [];
       if (mapInstanceRef.current) {
@@ -146,61 +244,40 @@ export default function TripPlannerPage() {
 
           const map = new L.Map({
             container: mapContainerRef.current!,
-            style: {
-              version: 8 as const,
-              sources: {
-                satellite: {
-                  type: "raster" as const,
-                  tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-                  tileSize: 256,
-                  attribution: "© Esri — Maxar, Earthstar Geographics",
-                },
-                // Reference layer: state/country lines, city names, mountain labels, roads
-                labels: {
-                  type: "raster" as const,
-                  tiles: ["https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
-                  tileSize: 256,
-                  attribution: "© Esri",
-                },
-                "trails-src": {
-                  type: "raster" as const,
-                  tiles: ["https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png"],
-                  tileSize: 256,
-                  attribution: "© Waymarked Trails, © OpenStreetMap contributors",
-                  minzoom: 5,
-                },
-                terrain: {
-                  type: "raster-dem" as const,
-                  tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-                  tileSize: 256,
-                  maxzoom: 15,
-                  encoding: "terrarium" as const,
-                },
-              },
-              layers: [
-                { id: "satellite", type: "raster" as const, source: "satellite" },
-                { id: "trails-layer", type: "raster" as const, source: "trails-src", layout: { visibility: "none" as const }, paint: { "raster-opacity": 0.9 } },
-                { id: "labels",    type: "raster" as const, source: "labels"    },
-              ],
-              terrain: { source: "terrain", exaggeration: 1.3 },
-            },
+            style: TRIP_MAP_STYLE,
             center: [-98.35, 39.5],
             zoom: 4,
-            pitch: 25,
+            pitch: 40,
             maxPitch: 85,
           });
           mapInstanceRef.current = map;
 
           map.addControl(new L.NavigationControl({ visualizePitch: true }), "top-right");
+          map.addControl(new L.ScaleControl(), "bottom-left");
           map.getCanvas().style.cursor = "crosshair";
 
-          // Add existing site markers after map loads; apply initial trails visibility
           map.on("load", () => {
             if (cancelled) return;
             mapLoadedRef.current = true;
-            if (showTrailsRef.current) {
-              try { map.setLayoutProperty("trails-layer", "visibility", "visible"); } catch {}
+
+            // Apply base layer state that may have been set before map loaded
+            try {
+              map.setLayoutProperty("satellite-layer", "visibility", baseLayer === "satellite" ? "visible" : "none");
+              map.setLayoutProperty("street-layer",    "visibility", baseLayer === "street"    ? "visible" : "none");
+              map.setLayoutProperty("labels",          "visibility", baseLayer === "satellite" ? "visible" : "none");
+            } catch {}
+
+            // Apply terrain state
+            if (!terrain) {
+              try { map.setTerrain(null); map.setPitch(0); } catch {}
             }
+
+            // Apply overlay
+            if (overlayLayerRef.current !== "none") {
+              safeAddOverlay(map, overlayLayerRef.current);
+            }
+
+            // Place existing site markers
             const sitesSnapshot = activeTrip?.sites ?? [];
             sitesSnapshot.forEach((s) => addSiteMarker(L, map, s));
           });
@@ -217,20 +294,44 @@ export default function TripPlannerPage() {
       });
     });
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [mapOpen]);
 
-  // Keep showTrailsRef in sync with state so the map load callback sees latest value
+  // ── Base layer ─────────────────────────────────────────────────────────────
   useEffect(() => {
-    showTrailsRef.current = showTrails;
-    if (!mapLoadedRef.current || !mapInstanceRef.current) return;
+    if (!mapInstanceRef.current || !mapLoadedRef.current) return;
     try {
-      mapInstanceRef.current.setLayoutProperty("trails-layer", "visibility", showTrails ? "visible" : "none");
+      mapInstanceRef.current.setLayoutProperty("satellite-layer", "visibility", baseLayer === "satellite" ? "visible" : "none");
+      mapInstanceRef.current.setLayoutProperty("street-layer",    "visibility", baseLayer === "street"    ? "visible" : "none");
+      // Esri reference labels only make sense over satellite; OSM street tiles include their own labels
+      mapInstanceRef.current.setLayoutProperty("labels",          "visibility", baseLayer === "satellite" ? "visible" : "none");
     } catch {}
-  }, [showTrails]);
+  }, [baseLayer]);
 
+  // ── Terrain ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!mapInstanceRef.current || !mapLoadedRef.current) return;
+    try {
+      if (terrain) {
+        mapInstanceRef.current.setTerrain({ source: "terrain", exaggeration: 1.5 });
+        mapInstanceRef.current.setMaxPitch(85);
+      } else {
+        mapInstanceRef.current.setTerrain(null);
+        mapInstanceRef.current.setMaxPitch(60);
+        mapInstanceRef.current.setPitch(0);
+      }
+    } catch {}
+  }, [terrain]);
+
+  // ── Overlay ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    overlayLayerRef.current = overlayLayer;
+    if (!mapInstanceRef.current || !mapLoadedRef.current) return;
+    safeRemoveOverlays(mapInstanceRef.current);
+    if (overlayLayer !== "none") safeAddOverlay(mapInstanceRef.current, overlayLayer);
+  }, [overlayLayer]);
+
+  // ── Site marker helper ─────────────────────────────────────────────────────
   function addSiteMarker(L: any, map: any, site: { name: string; lat: number; lng: number; description?: string }) {
     const el = document.createElement("div");
     el.style.cssText =
@@ -257,7 +358,6 @@ export default function TripPlannerPage() {
       lat: pendingCoords[0],
       lng: pendingCoords[1],
     });
-    // Add marker immediately
     if (mapInstanceRef.current && newSite) {
       import("maplibre-gl").then((L) => {
         if (mapInstanceRef.current && newSite) addSiteMarker(L, mapInstanceRef.current, newSite);
@@ -268,6 +368,7 @@ export default function TripPlannerPage() {
     setPendingSiteDesc("");
   };
 
+  // ── Render ─────────────────────────────────────────────────────────────────
   if (!activeTrip && tripId !== "new") {
     return (
       <Layout>
@@ -392,11 +493,11 @@ export default function TripPlannerPage() {
         </div>
       </div>
 
-      {/* ── Map Modal ─────────────────────────────────────────────────────── */}
+      {/* ── Map Modal ──────────────────────────────────────────────────────── */}
       {mapOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div
-            className="bg-card rounded-3xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden"
+            className="bg-card rounded-3xl shadow-2xl w-full max-w-6xl flex flex-col overflow-hidden"
             style={{ height: MAP_MODAL_HEIGHT }}
           >
             {/* Modal header */}
@@ -420,7 +521,48 @@ export default function TripPlannerPage() {
               </div>
             </div>
 
-            {/* Map container — explicit pixel height avoids the 0-dimension bug */}
+            {/* ── Map controls bar (mirrors map-view controls) ── */}
+            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-border shrink-0 bg-muted/30">
+              {/* Base layer toggle */}
+              <div className="flex items-center gap-0.5 bg-card border border-border rounded-lg p-1 shadow-sm">
+                {(["satellite", "street"] as const).map((bl) => (
+                  <button
+                    key={bl}
+                    onClick={() => setBaseLayer(bl)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${baseLayer === bl ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {bl === "satellite" ? <Satellite className="w-3.5 h-3.5" /> : <Map className="w-3.5 h-3.5" />}
+                    {bl.charAt(0).toUpperCase() + bl.slice(1)}
+                  </button>
+                ))}
+              </div>
+
+              {/* 3D Terrain toggle */}
+              <button
+                onClick={() => setTerrain((t) => !t)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all shadow-sm ${terrain ? "bg-accent text-accent-foreground border-accent" : "bg-card border-border text-muted-foreground hover:text-foreground"}`}
+              >
+                <Mountain className="w-3.5 h-3.5" />
+                3D Terrain
+              </button>
+
+              {/* Overlay dropdown */}
+              <div className="relative">
+                <select
+                  className="flex items-center pl-8 pr-4 h-9 rounded-lg border border-border bg-card text-sm font-medium shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/20 appearance-none"
+                  value={overlayLayer}
+                  onChange={(e) => setOverlayLayer(e.target.value as OverlayLayer)}
+                >
+                  <option value="none">No Overlay</option>
+                  <option value="geology">Rock Formations (Macrostrat)</option>
+                  <option value="soil">Soil Types (SoilGrids)</option>
+                  <option value="trails">Hiking Trails (Waymarked)</option>
+                </select>
+                <Layers className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+              </div>
+            </div>
+
+            {/* Map container */}
             <div className="relative flex-1 overflow-hidden">
               {/* Hint banner */}
               {!pendingCoords && (
@@ -477,39 +619,11 @@ export default function TripPlannerPage() {
                 </div>
               )}
 
-              {/* THE MAP — fills the remaining modal height via flex-1 */}
-              <div className="relative" style={{ width: "100%", height: "100%" }}>
-                <div
-                  ref={mapContainerRef}
-                  style={{ width: "100%", height: "100%" }}
-                />
-                {/* Hiking trails toggle */}
-                <button
-                  onClick={() => setShowTrails((t) => !t)}
-                  title={showTrails ? "Hide hiking trails" : "Show hiking trails"}
-                  style={{
-                    position: "absolute",
-                    bottom: "88px",
-                    right: "10px",
-                    zIndex: 10,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "6px 10px",
-                    borderRadius: "8px",
-                    border: showTrails ? "2px solid #155e4e" : "2px solid #ccc",
-                    background: showTrails ? "#155e4e" : "#fff",
-                    color: showTrails ? "#fff" : "#333",
-                    fontSize: "12px",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    boxShadow: "0 1px 6px rgba(0,0,0,0.3)",
-                    fontFamily: "system-ui, sans-serif",
-                  }}
-                >
-                  🥾 Trails
-                </button>
-              </div>
+              {/* THE MAP */}
+              <div
+                ref={mapContainerRef}
+                style={{ width: "100%", height: "100%" }}
+              />
             </div>
           </div>
         </div>
