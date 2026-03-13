@@ -40,7 +40,7 @@ function Router() {
       <Route path="/map">
         <ProtectedRoute component={MapViewPage} />
       </Route>
-      <Route path="/trip">
+      <Route path="/trip/:tripId">
         <ProtectedRoute component={TripPlannerPage} />
       </Route>
       <Route path="/sample/:id">

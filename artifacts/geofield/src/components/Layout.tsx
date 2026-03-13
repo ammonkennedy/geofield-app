@@ -1,19 +1,33 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useGetCurrentAuthUser, useGetFolders } from "@workspace/api-client-react";
 import { Button } from "./ui/button";
 import { FolderDialog } from "./FolderDialog";
 import { Pickaxe, FolderOpen, MapPin, LogOut, ChevronRight, Menu, Plus, Map, Bookmark } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { loadTrips, type Trip } from "@/pages/trip-planner";
 
 export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
+  const [, setLocation] = useLocation();
   const { data: authData } = useGetCurrentAuthUser();
   const { data: folders } = useGetFolders();
   const [datasetDialogOpen, setDatasetDialogOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [trips, setTrips] = useState<Trip[]>(loadTrips);
 
   const user = authData?.user;
+
+  // Keep trips list in sync when trips are saved (same tab or other tabs)
+  useEffect(() => {
+    const refresh = () => setTrips(loadTrips());
+    window.addEventListener("trips-updated", refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener("trips-updated", refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-background flex flex-col md:flex-row">
@@ -65,17 +79,44 @@ export function Layout({ children }: { children: ReactNode }) {
                 <Map className="w-4 h-4" />
                 Map View
               </Link>
-              <Link
-                href="/trip"
-                className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
-                  location === "/trip" ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"
-                )}
-                onClick={() => setSidebarOpen(false)}
+            </nav>
+          </div>
+
+          {/* Trips */}
+          <div className="px-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Trips</h3>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6"
+                onClick={() => { setSidebarOpen(false); setLocation("/trip/new"); }}
+                title="New trip"
               >
-                <Bookmark className="w-4 h-4" />
-                Plan a Trip
-              </Link>
+                <Plus className="w-4 h-4" />
+              </Button>
+            </div>
+            <nav className="space-y-1">
+              {trips.map((trip) => (
+                <Link
+                  key={trip.id}
+                  href={`/trip/${trip.id}`}
+                  className={cn(
+                    "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 group",
+                    location === `/trip/${trip.id}`
+                      ? "bg-primary text-primary-foreground font-medium shadow-md"
+                      : "text-foreground hover:bg-muted font-medium"
+                  )}
+                  onClick={() => setSidebarOpen(false)}
+                >
+                  <Bookmark className="w-4 h-4 opacity-80 shrink-0" />
+                  <span className="truncate flex-1">{trip.name || "Untitled Trip"}</span>
+                  {location === `/trip/${trip.id}` && <ChevronRight className="w-4 h-4 shrink-0" />}
+                </Link>
+              ))}
+              {trips.length === 0 && (
+                <p className="text-xs text-muted-foreground italic px-3 py-2">No trips yet</p>
+              )}
             </nav>
           </div>
 

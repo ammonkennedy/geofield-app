@@ -1,8 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Layout } from "@/components/Layout";
 import { useGetSamples, useGetFolders } from "@workspace/api-client-react";
 import { MapPin, FolderOpen, AlertCircle, Layers, Satellite, Map, Mountain } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import "maplibre-gl/dist/maplibre-gl.css";
 
 const TYPE_COLORS: Record<string, string> = {
@@ -19,7 +18,11 @@ const TYPE_LABELS: Record<string, string> = {
 type BaseLayer = "street" | "satellite";
 type OverlayLayer = "none" | "geology" | "soil";
 
-function parseCoords(raw: any): [number, number] | null {
+const GEO_TILES = "https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png";
+const SOIL_WMS =
+  "https://maps.isric.org/mapserv?map=/map/wrb.map&SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=image%2Fpng&TRANSPARENT=TRUE&LAYERS=MostProbable&WIDTH=256&HEIGHT=256&CRS=EPSG%3A3857&BBOX={bbox-epsg-3857}";
+
+function parseCoords(raw: unknown): [number, number] | null {
   if (!raw && raw !== 0) return null;
   const str = String(raw).trim();
   if (!str) return null;
@@ -40,25 +43,36 @@ function parseCoords(raw: any): [number, number] | null {
   return null;
 }
 
-const STREET_STYLE = {
-  version: 8 as const,
+// Build the initial static map style (both raster sources baked in, toggle via visibility)
+const INITIAL_STYLE: any = {
+  version: 8,
   sources: {
-    osm: {
-      type: "raster" as const,
+    satellite: {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      attribution: "© Esri — Maxar, Earthstar Geographics",
+      maxzoom: 18,
+    },
+    street: {
+      type: "raster",
       tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
       tileSize: 256,
       attribution: "© OpenStreetMap contributors",
       maxzoom: 19,
     },
     terrain: {
-      type: "raster-dem" as const,
+      type: "raster-dem",
       tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
       tileSize: 256,
       maxzoom: 15,
-      encoding: "terrarium" as const,
+      encoding: "terrarium",
     },
   },
-  layers: [{ id: "osm", type: "raster" as const, source: "osm" }],
+  layers: [
+    { id: "satellite-layer", type: "raster", source: "satellite", layout: { visibility: "visible" } },
+    { id: "street-layer", type: "raster", source: "street", layout: { visibility: "none" } },
+  ],
   terrain: { source: "terrain", exaggeration: 1.5 },
   sky: {
     "sky-color": "#87CEEB",
@@ -70,28 +84,26 @@ const STREET_STYLE = {
   },
 };
 
-const SATELLITE_STYLE = {
-  ...STREET_STYLE,
-  sources: {
-    ...STREET_STYLE.sources,
-    satellite: {
-      type: "raster" as const,
-      tiles: [
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-      ],
-      tileSize: 256,
-      attribution:
-        "Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community",
-      maxzoom: 18,
-    },
-  },
-  layers: [{ id: "satellite", type: "raster" as const, source: "satellite" }],
-};
+function safeRemoveOverlays(map: any) {
+  for (const id of ["geology-overlay", "soil-overlay"]) {
+    try { if (map.getLayer(id)) map.removeLayer(id); } catch {}
+  }
+  for (const id of ["geology", "soil"]) {
+    try { if (map.getSource(id)) map.removeSource(id); } catch {}
+  }
+}
 
-const GEO_WMS =
-  "https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png";
-
-const SOIL_WMS = `https://maps.isric.org/mapserv?map=/map/wrb.map&SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=image%2Fpng&TRANSPARENT=TRUE&LAYERS=MostProbable&WIDTH=256&HEIGHT=256&CRS=EPSG%3A3857&BBOX={bbox-epsg-3857}`;
+function safeAddOverlay(map: any, overlay: OverlayLayer) {
+  try {
+    if (overlay === "geology") {
+      map.addSource("geology", { type: "raster", tiles: [GEO_TILES], tileSize: 256, attribution: "© Macrostrat" });
+      map.addLayer({ id: "geology-overlay", type: "raster", source: "geology", paint: { "raster-opacity": 0.65 } });
+    } else if (overlay === "soil") {
+      map.addSource("soil", { type: "raster", tiles: [SOIL_WMS], tileSize: 256, attribution: "© ISRIC" });
+      map.addLayer({ id: "soil-overlay", type: "raster", source: "soil", paint: { "raster-opacity": 0.65 } });
+    }
+  } catch {}
+}
 
 interface GeoInfo {
   loading: boolean;
@@ -104,8 +116,8 @@ export default function MapViewPage() {
   const [selectedFolderId, setSelectedFolderId] = useState<number | "all">("all");
   const [baseLayer, setBaseLayer] = useState<BaseLayer>("satellite");
   const [overlayLayer, setOverlayLayer] = useState<OverlayLayer>("none");
-  const [geoInfo, setGeoInfo] = useState<GeoInfo | null>(null);
   const [terrain, setTerrain] = useState(true);
+  const [geoInfo, setGeoInfo] = useState<GeoInfo | null>(null);
 
   const { data: allSamples } = useGetSamples();
   const { data: folders } = useGetFolders();
@@ -114,76 +126,35 @@ export default function MapViewPage() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<any[]>([]);
   const popupRef = useRef<any>(null);
+  // Use refs for values accessed inside async / event-handler closures to avoid stale captures
+  const overlayLayerRef = useRef<OverlayLayer>("none");
+  const mapLoadedRef = useRef(false);
 
   const filteredSamples = (allSamples || []).filter((s) =>
     selectedFolderId === "all" ? true : s.folderId === selectedFolderId
   );
-  const samplesWithCoords = filteredSamples.filter((s) =>
-    parseCoords((s.fields as any)?.location)
-  );
-  const samplesWithoutCoords = filteredSamples.filter(
-    (s) => !parseCoords((s.fields as any)?.location)
-  );
+  const samplesWithCoords = filteredSamples.filter((s) => parseCoords((s.fields as any)?.location));
+  const samplesWithoutCoords = filteredSamples.filter((s) => !parseCoords((s.fields as any)?.location));
 
-  const rebuildMap = useCallback(
-    (L: any, base: BaseLayer, over: OverlayLayer, ter: boolean) => {
-      if (!mapContainerRef.current) return;
-      const center: [number, number] = mapRef.current
-        ? mapRef.current.getCenter().toArray()
-        : [-98.35, 39.5];
-      const zoom = mapRef.current ? mapRef.current.getZoom() : 4;
-      const pitch = mapRef.current ? mapRef.current.getPitch() : 40;
-      const bearing = mapRef.current ? mapRef.current.getBearing() : 0;
+  // Keep overlayLayerRef in sync with state
+  useEffect(() => {
+    overlayLayerRef.current = overlayLayer;
+  }, [overlayLayer]);
 
-      if (mapRef.current) {
-        markersRef.current.forEach((m) => m.remove());
-        markersRef.current = [];
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
+  // ── INITIALIZE MAP ONCE ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
 
-      const style = base === "satellite" ? { ...SATELLITE_STYLE } : { ...STREET_STYLE };
-      if (!ter) {
-        delete (style as any).terrain;
-      }
-
-      if (over === "geology") {
-        (style as any).sources["geology"] = {
-          type: "raster",
-          tiles: [GEO_WMS],
-          tileSize: 256,
-          attribution: "© Macrostrat",
-        };
-        (style as any).layers.push({
-          id: "geology-overlay",
-          type: "raster",
-          source: "geology",
-          paint: { "raster-opacity": 0.6 },
-        });
-      }
-      if (over === "soil") {
-        (style as any).sources["soil"] = {
-          type: "raster",
-          tiles: [SOIL_WMS],
-          tileSize: 256,
-          attribution: "© ISRIC World Soil Information",
-        };
-        (style as any).layers.push({
-          id: "soil-overlay",
-          type: "raster",
-          source: "soil",
-          paint: { "raster-opacity": 0.65 },
-        });
-      }
+    import("maplibre-gl").then((L) => {
+      if (!mapContainerRef.current || mapRef.current) return;
 
       const map = new L.Map({
         container: mapContainerRef.current!,
-        style,
-        center,
-        zoom,
-        pitch: ter ? pitch : 0,
-        bearing,
-        maxPitch: ter ? 85 : 0,
+        style: INITIAL_STYLE,
+        center: [-98.35, 39.5],
+        zoom: 4,
+        pitch: 40,
+        maxPitch: 85,
         attributionControl: true,
       });
       mapRef.current = map;
@@ -191,10 +162,22 @@ export default function MapViewPage() {
       map.addControl(new L.NavigationControl({ visualizePitch: true }), "top-right");
       map.addControl(new L.ScaleControl(), "bottom-left");
 
+      map.on("load", () => {
+        mapLoadedRef.current = true;
+        // Apply initial overlay if any
+        if (overlayLayerRef.current !== "none") {
+          safeAddOverlay(map, overlayLayerRef.current);
+        }
+        // Place initial markers
+        placeMarkers(L, map);
+      });
+
+      // Click handler — reads overlayLayerRef (never stale)
       map.on("click", async (e: any) => {
+        const over = overlayLayerRef.current;
         if (over === "none") return;
         const { lng, lat } = e.lngLat;
-        setGeoInfo({ loading: true, data: null, lngLat: [lng, lat] });
+        setGeoInfo({ loading: true, lngLat: [lng, lat] });
 
         if (over === "geology") {
           try {
@@ -208,12 +191,11 @@ export default function MapViewPage() {
                 loading: false,
                 lngLat: [lng, lat],
                 data: {
-                  "Formation": unit.strat_name_long || unit.map_unit_name || "Unknown",
-                  "Age": [unit.t_int_name, unit.b_int_name].filter(Boolean).join(" – ") || "—",
-                  "Era": unit.era || "—",
-                  "Lithology": unit.lith || "—",
-                  "Description": unit.descrip || "—",
-                  "Color": unit.color || "—",
+                  Formation: unit.strat_name_long || unit.map_unit_name || "Unknown",
+                  Age: [unit.t_int_name, unit.b_int_name].filter(Boolean).join(" – ") || "—",
+                  Era: unit.era || "—",
+                  Lithology: unit.lith || "—",
+                  Description: unit.descrip || "—",
                 },
               });
             } else {
@@ -229,22 +211,17 @@ export default function MapViewPage() {
             const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
             const r = await fetch(`${base}/api/proxy/soil?lat=${lat}&lng=${lng}`);
             const d = await r.json();
-
             if (d?.noData || d?.error) {
-              setGeoInfo({
-                loading: false,
-                lngLat: [lng, lat],
-                data: { Note: "No USDA soil survey data at this location. Coverage is US-only." },
-              });
+              setGeoInfo({ loading: false, lngLat: [lng, lat], data: { Note: "No USDA soil data here. Coverage is US-only." } });
             } else {
               const info: Record<string, string> = {};
-              if (d.mapUnit)      info["Map Unit"]         = d.mapUnit;
-              if (d.soilSeries)   info["Soil Series"]      = d.soilSeries;
-              if (d.taxClass)     info["Taxonomic Class"]  = d.taxClass;
-              if (d.order)        info["Order"]            = d.order;
-              if (d.suborder)     info["Suborder"]         = d.suborder;
-              if (d.drainage)     info["Drainage Class"]   = d.drainage;
-              if (d.slope != null) info["Slope (%)"]       = String(d.slope);
+              if (d.mapUnit) info["Map Unit"] = d.mapUnit;
+              if (d.soilSeries) info["Soil Series"] = d.soilSeries;
+              if (d.taxClass) info["Taxonomic Class"] = d.taxClass;
+              if (d.order) info["Order"] = d.order;
+              if (d.suborder) info["Suborder"] = d.suborder;
+              if (d.drainage) info["Drainage Class"] = d.drainage;
+              if (d.slope != null) info["Slope (%)"] = String(d.slope);
               if (d.pctComponent != null) info["Composition"] = `${d.pctComponent}% of map unit`;
               setGeoInfo({ loading: false, lngLat: [lng, lat], data: info });
             }
@@ -253,47 +230,91 @@ export default function MapViewPage() {
           }
         }
       });
+    });
 
-      map.on("load", () => {
-        addMarkers(L, map);
-      });
-    },
-    []
-  );
+    return () => {
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current = [];
+      if (popupRef.current) { try { popupRef.current.remove(); } catch {} popupRef.current = null; }
+      if (mapRef.current) {
+        try { mapRef.current.remove(); } catch {}
+        mapRef.current = null;
+      }
+      mapLoadedRef.current = false;
+    };
+  }, []); // only once
 
-  function addMarkers(L: any, map: any) {
+  // ── BASE LAYER ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!mapRef.current || !mapLoadedRef.current) return;
+    try {
+      mapRef.current.setLayoutProperty("satellite-layer", "visibility", baseLayer === "satellite" ? "visible" : "none");
+      mapRef.current.setLayoutProperty("street-layer", "visibility", baseLayer === "street" ? "visible" : "none");
+    } catch {}
+  }, [baseLayer]);
+
+  // ── TERRAIN ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!mapRef.current || !mapLoadedRef.current) return;
+    try {
+      if (terrain) {
+        mapRef.current.setTerrain({ source: "terrain", exaggeration: 1.5 });
+        mapRef.current.setMaxPitch(85);
+      } else {
+        mapRef.current.setTerrain(null);
+        mapRef.current.setMaxPitch(60);
+        mapRef.current.setPitch(0);
+      }
+    } catch {}
+  }, [terrain]);
+
+  // ── OVERLAY LAYER (dynamic add/remove — no map rebuild needed) ─────────────
+  useEffect(() => {
+    overlayLayerRef.current = overlayLayer;
+    if (!mapRef.current || !mapLoadedRef.current) return;
+    const map = mapRef.current;
+    safeRemoveOverlays(map);
+    if (overlayLayer !== "none") {
+      safeAddOverlay(map, overlayLayer);
+    }
+  }, [overlayLayer]);
+
+  // ── MARKERS ────────────────────────────────────────────────────────────────
+  function placeMarkers(L: any, map: any) {
     markersRef.current.forEach((m) => m.remove());
     markersRef.current = [];
-    if (popupRef.current) { popupRef.current.remove(); popupRef.current = null; }
+    if (popupRef.current) { try { popupRef.current.remove(); } catch {} }
 
     const popup = new L.Popup({ closeButton: true, maxWidth: 260 });
     popupRef.current = popup;
 
-    filteredSamples.forEach((sample) => {
+    const currentFiltered = (allSamples || []).filter((s) =>
+      selectedFolderId === "all" ? true : s.folderId === selectedFolderId
+    );
+
+    const bounds: [[number, number], [number, number]] | null = null;
+    const allCoords: [number, number][] = [];
+
+    currentFiltered.forEach((sample) => {
       const coords = parseCoords((sample.fields as any)?.location);
       if (!coords) return;
+      allCoords.push([coords[1], coords[0]]);
 
       const color = TYPE_COLORS[sample.sampleType] || "#666";
       const label = TYPE_LABELS[sample.sampleType] || sample.sampleType;
       const letter = sample.sampleType === "water" ? "W" : sample.sampleType === "rock" ? "R" : "S";
       const dateStr = (sample.fields as any)?.collectionDate
-        ? new Date((sample.fields as any).collectionDate).toLocaleString(undefined, {
-            dateStyle: "medium",
-            timeStyle: "short",
-          })
+        ? new Date((sample.fields as any).collectionDate).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
         : "";
       const photoHtml = (sample.fields as any)?.photo
-        ? `<img src="${(sample.fields as any).photo}" style="width:100%;height:80px;object-fit:cover;border-radius:6px;margin-bottom:8px;" />`
+        ? `<img src="${(sample.fields as any).photo}" style="width:100%;height:80px;object-fit:cover;border-radius:6px;margin-bottom:8px;"/>`
         : "";
 
       const el = document.createElement("div");
       el.innerHTML = `<div style="background:${color};color:white;border-radius:50% 50% 50% 0;transform:rotate(-45deg);width:34px;height:34px;border:2.5px solid white;box-shadow:0 3px 10px rgba(0,0,0,0.35);display:flex;align-items:center;justify-content:center;cursor:pointer;"><span style="transform:rotate(45deg);font-size:14px;font-weight:700;">${letter}</span></div>`;
+      const marker = new L.Marker({ element: el, anchor: "bottom" }).setLngLat([coords[1], coords[0]]).addTo(map);
 
-      const marker = new L.Marker({ element: el, anchor: "bottom" })
-        .setLngLat([coords[1], coords[0]])
-        .addTo(map);
-
-      marker.getElement().addEventListener("click", (e: Event) => {
+      el.addEventListener("click", (e: Event) => {
         e.stopPropagation();
         popup
           .setLngLat([coords[1], coords[0]])
@@ -315,51 +336,29 @@ export default function MapViewPage() {
       markersRef.current.push(marker);
     });
 
-    if (samplesWithCoords.length === 1) {
-      const [lat, lng] = parseCoords((samplesWithCoords[0].fields as any)?.location)!;
-      map.flyTo({ center: [lng, lat], zoom: 13 });
-    } else if (samplesWithCoords.length > 1) {
-      const coords = samplesWithCoords
-        .map((s) => parseCoords((s.fields as any)?.location))
-        .filter(Boolean) as [number, number][];
-      const lngs = coords.map((c) => c[1]);
-      const lats = coords.map((c) => c[0]);
+    if (allCoords.length === 1) {
+      map.flyTo({ center: allCoords[0], zoom: 13 });
+    } else if (allCoords.length > 1) {
+      const lngs = allCoords.map((c) => c[0]);
+      const lats = allCoords.map((c) => c[1]);
       map.fitBounds(
-        [
-          [Math.min(...lngs), Math.min(...lats)],
-          [Math.max(...lngs), Math.max(...lats)],
-        ],
+        [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
         { padding: 80 }
       );
     }
   }
 
   useEffect(() => {
-    let mounted = true;
-    import("maplibre-gl").then((L) => {
-      if (!mounted || !mapContainerRef.current) return;
-      rebuildMap(L, baseLayer, overlayLayer, terrain);
-    });
-    return () => {
-      mounted = false;
-      markersRef.current.forEach((m) => m.remove());
-      markersRef.current = [];
-      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
-    };
-  }, []);
-
-  useEffect(() => {
     if (!mapRef.current) return;
     import("maplibre-gl").then((L) => {
-      rebuildMap(L, baseLayer, overlayLayer, terrain);
-    });
-  }, [baseLayer, overlayLayer, terrain]);
-
-  useEffect(() => {
-    if (!mapRef.current) return;
-    import("maplibre-gl").then((L) => {
-      if (mapRef.current?._loaded) addMarkers(L, mapRef.current);
-      else mapRef.current?.once("load", () => addMarkers(L, mapRef.current));
+      if (!mapRef.current) return;
+      if (mapLoadedRef.current) {
+        placeMarkers(L, mapRef.current);
+      } else {
+        mapRef.current.once("load", () => {
+          if (mapRef.current) placeMarkers(L, mapRef.current);
+        });
+      }
     });
   }, [allSamples, selectedFolderId]);
 
@@ -375,52 +374,40 @@ export default function MapViewPage() {
             <p className="text-muted-foreground mt-1">
               {samplesWithCoords.length} sample{samplesWithCoords.length !== 1 ? "s" : ""} plotted
               {selectedFolderId !== "all" && folders && (
-                <span className="ml-1">
-                  from <strong>{folders.find((f) => f.id === selectedFolderId)?.name}</strong>
-                </span>
+                <span className="ml-1">from <strong>{folders.find((f) => f.id === selectedFolderId)?.name}</strong></span>
               )}
             </p>
           </div>
-
-          {/* Dataset filter */}
           <div className="relative">
             <select
               className="flex items-center pl-8 pr-4 h-9 rounded-lg border border-border bg-card text-sm font-medium shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/20 appearance-none"
               value={selectedFolderId}
-              onChange={(e) =>
-                setSelectedFolderId(e.target.value === "all" ? "all" : Number(e.target.value))
-              }
+              onChange={(e) => setSelectedFolderId(e.target.value === "all" ? "all" : Number(e.target.value))}
             >
               <option value="all">All Datasets</option>
-              {folders?.map((f) => (
-                <option key={f.id} value={f.id}>{f.name}</option>
-              ))}
+              {folders?.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
             </select>
             <FolderOpen className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
           </div>
         </div>
 
-        {/* Map Controls */}
+        {/* Controls */}
         <div className="flex flex-wrap gap-3 items-center">
           {/* Base layer */}
-          <div className="flex items-center gap-1.5 bg-card border border-border rounded-lg p-1 shadow-sm">
-            <button
-              onClick={() => setBaseLayer("satellite")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${baseLayer === "satellite" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              <Satellite className="w-3.5 h-3.5" />
-              Satellite
-            </button>
-            <button
-              onClick={() => setBaseLayer("street")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${baseLayer === "street" ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground"}`}
-            >
-              <Map className="w-3.5 h-3.5" />
-              Street
-            </button>
+          <div className="flex items-center gap-1 bg-card border border-border rounded-lg p-1 shadow-sm">
+            {(["satellite", "street"] as const).map((bl) => (
+              <button
+                key={bl}
+                onClick={() => setBaseLayer(bl)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${baseLayer === bl ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground"}`}
+              >
+                {bl === "satellite" ? <Satellite className="w-3.5 h-3.5" /> : <Map className="w-3.5 h-3.5" />}
+                {bl.charAt(0).toUpperCase() + bl.slice(1)}
+              </button>
+            ))}
           </div>
 
-          {/* 3D terrain toggle */}
+          {/* Terrain */}
           <button
             onClick={() => setTerrain(!terrain)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all shadow-sm ${terrain ? "bg-accent text-accent-foreground border-accent" : "bg-card border-border text-muted-foreground hover:text-foreground"}`}
@@ -429,15 +416,12 @@ export default function MapViewPage() {
             3D Terrain
           </button>
 
-          {/* Geological overlay */}
+          {/* Overlay */}
           <div className="relative">
             <select
               className="flex items-center pl-8 pr-4 h-9 rounded-lg border border-border bg-card text-sm font-medium shadow-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/20 appearance-none"
               value={overlayLayer}
-              onChange={(e) => {
-                setOverlayLayer(e.target.value as OverlayLayer);
-                setGeoInfo(null);
-              }}
+              onChange={(e) => { setOverlayLayer(e.target.value as OverlayLayer); setGeoInfo(null); }}
             >
               <option value="none">No Overlay</option>
               <option value="geology">Rock Formations (Macrostrat)</option>
@@ -447,7 +431,7 @@ export default function MapViewPage() {
           </div>
 
           {/* Legend */}
-          <div className="flex gap-3 ml-auto">
+          <div className="flex gap-3 ml-auto flex-wrap">
             {Object.entries(TYPE_COLORS).map(([type, color]) => (
               <div key={type} className="flex items-center gap-1.5 text-sm">
                 <span className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
@@ -457,13 +441,12 @@ export default function MapViewPage() {
           </div>
         </div>
 
-        {/* Overlay hint */}
         {overlayLayer !== "none" && (
           <div className="text-xs text-muted-foreground bg-card border border-border rounded-lg px-3 py-2 flex items-center gap-2">
             <Layers className="w-3.5 h-3.5 text-primary shrink-0" />
             {overlayLayer === "geology"
-              ? "Click anywhere on the map to get rock formation and geological age data."
-              : "Click anywhere on the map to get WRB soil classification (SoilGrids / ISRIC)."}
+              ? "Click anywhere to get rock formation and geological age data."
+              : "Click anywhere to get soil classification data (USDA SSURGO, US coverage only)."}
           </div>
         )}
 
@@ -472,60 +455,47 @@ export default function MapViewPage() {
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
             <span>
               <strong>{samplesWithoutCoords.length} sample{samplesWithoutCoords.length !== 1 ? "s" : ""} not shown</strong>{" "}
-              — no GPS coordinates: {samplesWithoutCoords.map((s) => s.sampleId).join(", ")}.{" "}
-              Edit those samples and enter <em>lat, lng</em> (e.g. 40.7128, -74.0060).
+              — no GPS: {samplesWithoutCoords.map((s) => s.sampleId).join(", ")}.
+              Edit those samples and enter <em>lat, lng</em>.
             </span>
           </div>
         )}
       </div>
 
-      {/* Map + side panel */}
-      <div className="relative flex gap-4" style={{ height: "calc(100vh - 340px)", minHeight: "400px" }}>
-        {/* Geo info side panel */}
+      {/* Map + info panel */}
+      <div className="relative flex gap-4" style={{ height: "calc(100vh - 320px)", minHeight: "400px" }}>
         {geoInfo && (
           <div className="w-72 shrink-0 bg-card border border-border rounded-2xl shadow-lg overflow-y-auto p-5 space-y-3 z-10">
             <div className="flex items-center justify-between">
               <h3 className="font-semibold font-display text-sm flex items-center gap-2">
                 <Layers className="w-4 h-4 text-primary" />
-                {overlayLayer === "geology" ? "Rock Formation Data" : "Soil Data"}
+                {overlayLayer === "geology" ? "Rock Formation" : "Soil Data"}
               </h3>
               <button onClick={() => setGeoInfo(null)} className="text-muted-foreground hover:text-foreground text-lg leading-none">×</button>
             </div>
             {geoInfo.lngLat && (
-              <p className="text-xs text-muted-foreground">
-                📍 {geoInfo.lngLat[1].toFixed(4)}, {geoInfo.lngLat[0].toFixed(4)}
-              </p>
+              <p className="text-xs text-muted-foreground">📍 {geoInfo.lngLat[1].toFixed(4)}, {geoInfo.lngLat[0].toFixed(4)}</p>
             )}
             {geoInfo.loading && (
-              <div className="space-y-2">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-4 bg-muted animate-pulse rounded" />
-                ))}
-              </div>
+              <div className="space-y-2">{[1, 2, 3].map((i) => <div key={i} className="h-4 bg-muted animate-pulse rounded" />)}</div>
             )}
-            {geoInfo.error && (
-              <p className="text-sm text-destructive">{geoInfo.error}</p>
-            )}
+            {geoInfo.error && <p className="text-sm text-destructive">{geoInfo.error}</p>}
             {geoInfo.data && !geoInfo.loading && (
               <div className="space-y-2.5">
-                {Object.entries(geoInfo.data).map(([key, val]) => (
-                  <div key={key}>
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{key}</p>
-                    <p className="text-sm text-foreground mt-0.5">{val || "—"}</p>
+                {Object.entries(geoInfo.data).map(([k, v]) => (
+                  <div key={k}>
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{k}</p>
+                    <p className="text-sm text-foreground mt-0.5">{v || "—"}</p>
                   </div>
                 ))}
                 <p className="text-xs text-muted-foreground pt-2 border-t border-border">
-                  {overlayLayer === "geology" ? "Source: Macrostrat" : "Source: SoilGrids / UC Davis SoilWeb"}
+                  {overlayLayer === "geology" ? "Source: Macrostrat" : "Source: USDA SSURGO"}
                 </p>
               </div>
             )}
           </div>
         )}
-
-        <div
-          ref={mapContainerRef}
-          className="flex-1 rounded-2xl overflow-hidden border border-border shadow-lg"
-        />
+        <div ref={mapContainerRef} className="flex-1 rounded-2xl overflow-hidden border border-border shadow-lg" />
       </div>
     </Layout>
   );
