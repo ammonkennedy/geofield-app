@@ -212,63 +212,29 @@ export function DatasetFigures({ samples, datasetName }: { samples: Sample[]; da
 
   const paramMeta = selectedParam ? NUMERIC_PARAMS[selectedParam] : null;
 
-  const downloadChart = () => {
+  const downloadChart = async () => {
     if (!chartContainerRef.current || !paramMeta) return;
-    const svg = chartContainerRef.current.querySelector("svg");
-    if (!svg) return;
     setIsDownloading(true);
-
-    const bbox = svg.getBoundingClientRect();
-    const scale = 2;
-    const W = bbox.width;
-    const H = bbox.height;
-    const HEADER = 56; // extra pixels for title row above chart
-
-    const canvas = document.createElement("canvas");
-    canvas.width = (W + 32) * scale;
-    canvas.height = (H + HEADER + 16) * scale;
-    const ctx = canvas.getContext("2d")!;
-    ctx.scale(scale, scale);
-
-    // White background
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, W + 32, H + HEADER + 16);
-
-    // Title text
-    const title = `${paramMeta.label}${paramMeta.unit ? ` (${paramMeta.unit})` : ""}`;
-    const subtitle = `${chartData.length} sample${chartData.length !== 1 ? "s" : ""}${datasetName ? ` — ${datasetName}` : ""}`;
-    ctx.fillStyle = "#111";
-    ctx.font = "bold 14px system-ui, sans-serif";
-    ctx.fillText(title, 16, 22);
-    ctx.fillStyle = "#666";
-    ctx.font = "11px system-ui, sans-serif";
-    ctx.fillText(subtitle, 16, 40);
-    if (stats) {
-      const statsStr = `Min: ${stats.min}  Avg: ${stats.avg}  Max: ${stats.max}  n=${stats.n}`;
-      ctx.textAlign = "right";
-      ctx.fillText(statsStr, W + 16, 40);
-      ctx.textAlign = "left";
-    }
-
-    // Draw SVG onto canvas
-    const svgClone = svg.cloneNode(true) as SVGSVGElement;
-    svgClone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
-    const svgData = new XMLSerializer().serializeToString(svgClone);
-    const svgBlob = new Blob([svgData], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(svgBlob);
-    const img = new Image();
-    img.onload = () => {
-      ctx.drawImage(img, 16, HEADER, W, H);
-      URL.revokeObjectURL(url);
+    try {
+      const { default: html2canvas } = await import("html2canvas");
+      const canvas = await html2canvas(chartContainerRef.current, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        logging: false,
+        useCORS: true,
+      });
       const fname = `${(datasetName || "dataset").replace(/[^a-zA-Z0-9]/g, "_")}_${paramMeta.label.replace(/[^a-zA-Z0-9]/g, "_")}_${chartType}.png`;
       const a = document.createElement("a");
       a.download = fname;
       a.href = canvas.toDataURL("image/png");
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error("Chart download failed", err);
+    } finally {
       setIsDownloading(false);
-    };
-    img.onerror = () => setIsDownloading(false);
-    img.src = url;
+    }
   };
 
   const stats = useMemo(() => {
@@ -388,6 +354,7 @@ export function DatasetFigures({ samples, datasetName }: { samples: Sample[]; da
                           className="gap-1.5 shrink-0"
                           onClick={downloadChart}
                           disabled={isDownloading}
+                          data-html2canvas-ignore="true"
                         >
                           <Download className="w-3.5 h-3.5" />
                           {isDownloading ? "Saving..." : "Download PNG"}
