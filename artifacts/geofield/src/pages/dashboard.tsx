@@ -9,6 +9,7 @@ import { Plus, Download, Search, Edit2, Trash2, FolderOpen, MapPin, Calendar } f
 import { Input } from "@/components/ui/input";
 import { useSamplesMutations, useFoldersMutations } from "@/hooks/use-geofield";
 import { ExportDialog } from "@/components/ExportDialog";
+import { DatasetFigures } from "@/components/DatasetFigures";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog";
 
 const typeStyles = {
@@ -70,6 +71,9 @@ export default function Dashboard() {
             <Button variant="outline" className="text-destructive border-destructive/20 hover:bg-destructive/10" onClick={handleDeleteFolder}>
               Delete Dataset
             </Button>
+          )}
+          {activeFolder && filteredSamples.length > 0 && (
+            <DatasetFigures samples={filteredSamples} datasetName={activeFolder.name} />
           )}
           <Button variant="secondary" onClick={() => setExportOpen(true)}>
             <Download className="w-4 h-4 mr-2" />

@@ -2,7 +2,7 @@
 
 ## Overview
 
-GeoField is a geology field data collection app built as a pnpm monorepo. It allows geologists to record water, rock, and soil/sand samples with type-specific parameter forms, organize them into folders, and export data to CSV.
+GeoField is a geology field data collection app built as a pnpm monorepo. It allows geologists to record water, rock, and soil/sand samples with type-specific parameter forms, organize them into datasets, export data to Excel (.xlsx), and visualize sample locations on a 3D interactive geological map.
 
 ## Stack
 
@@ -18,7 +18,9 @@ GeoField is a geology field data collection app built as a pnpm monorepo. It all
 - **Frontend**: React + Vite with Tailwind CSS, shadcn/ui components
 - **State management**: TanStack React Query (via generated hooks)
 - **Forms**: react-hook-form + zod
-- **Export**: papaparse (CSV)
+- **Export**: SheetJS xlsx (.xlsx format)
+- **Maps**: MapLibre GL JS (3D globe, satellite/terrain) with Macrostrat + SoilGrids geological overlays
+- **Charts**: Recharts (bar, scatter, grouped comparison)
 
 ## Structure
 
