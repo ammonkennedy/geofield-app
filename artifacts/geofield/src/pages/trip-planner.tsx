@@ -56,6 +56,9 @@ export default function TripPlannerPage() {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<any>(null);
   const mapMarkersRef = useRef<any[]>([]);
+  const mapLoadedRef = useRef(false);
+  const [showTrails, setShowTrails] = useState(false);
+  const showTrailsRef = useRef(false);
   const [pendingCoords, setPendingCoords] = useState<[number, number] | null>(null);
   const [pendingSiteName, setPendingSiteName] = useState("");
   const [pendingSiteDesc, setPendingSiteDesc] = useState("");
@@ -126,6 +129,7 @@ export default function TripPlannerPage() {
         try { mapInstanceRef.current.remove(); } catch {}
         mapInstanceRef.current = null;
       }
+      mapLoadedRef.current = false;
       setPendingCoords(null);
       return;
     }
@@ -158,6 +162,13 @@ export default function TripPlannerPage() {
                   tileSize: 256,
                   attribution: "© Esri",
                 },
+                "trails-src": {
+                  type: "raster" as const,
+                  tiles: ["https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png"],
+                  tileSize: 256,
+                  attribution: "© Waymarked Trails, © OpenStreetMap contributors",
+                  minzoom: 5,
+                },
                 terrain: {
                   type: "raster-dem" as const,
                   tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
@@ -168,6 +179,7 @@ export default function TripPlannerPage() {
               },
               layers: [
                 { id: "satellite", type: "raster" as const, source: "satellite" },
+                { id: "trails-layer", type: "raster" as const, source: "trails-src", layout: { visibility: "none" as const }, paint: { "raster-opacity": 0.9 } },
                 { id: "labels",    type: "raster" as const, source: "labels"    },
               ],
               terrain: { source: "terrain", exaggeration: 1.3 },
@@ -182,9 +194,13 @@ export default function TripPlannerPage() {
           map.addControl(new L.NavigationControl({ visualizePitch: true }), "top-right");
           map.getCanvas().style.cursor = "crosshair";
 
-          // Add existing site markers after map loads
+          // Add existing site markers after map loads; apply initial trails visibility
           map.on("load", () => {
             if (cancelled) return;
+            mapLoadedRef.current = true;
+            if (showTrailsRef.current) {
+              try { map.setLayoutProperty("trails-layer", "visibility", "visible"); } catch {}
+            }
             const sitesSnapshot = activeTrip?.sites ?? [];
             sitesSnapshot.forEach((s) => addSiteMarker(L, map, s));
           });
@@ -205,6 +221,15 @@ export default function TripPlannerPage() {
       cancelled = true;
     };
   }, [mapOpen]);
+
+  // Keep showTrailsRef in sync with state so the map load callback sees latest value
+  useEffect(() => {
+    showTrailsRef.current = showTrails;
+    if (!mapLoadedRef.current || !mapInstanceRef.current) return;
+    try {
+      mapInstanceRef.current.setLayoutProperty("trails-layer", "visibility", showTrails ? "visible" : "none");
+    } catch {}
+  }, [showTrails]);
 
   function addSiteMarker(L: any, map: any, site: { name: string; lat: number; lng: number; description?: string }) {
     const el = document.createElement("div");
@@ -453,10 +478,38 @@ export default function TripPlannerPage() {
               )}
 
               {/* THE MAP — fills the remaining modal height via flex-1 */}
-              <div
-                ref={mapContainerRef}
-                style={{ width: "100%", height: "100%" }}
-              />
+              <div className="relative" style={{ width: "100%", height: "100%" }}>
+                <div
+                  ref={mapContainerRef}
+                  style={{ width: "100%", height: "100%" }}
+                />
+                {/* Hiking trails toggle */}
+                <button
+                  onClick={() => setShowTrails((t) => !t)}
+                  title={showTrails ? "Hide hiking trails" : "Show hiking trails"}
+                  style={{
+                    position: "absolute",
+                    bottom: "88px",
+                    right: "10px",
+                    zIndex: 10,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "6px 10px",
+                    borderRadius: "8px",
+                    border: showTrails ? "2px solid #155e4e" : "2px solid #ccc",
+                    background: showTrails ? "#155e4e" : "#fff",
+                    color: showTrails ? "#fff" : "#333",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    boxShadow: "0 1px 6px rgba(0,0,0,0.3)",
+                    fontFamily: "system-ui, sans-serif",
+                  }}
+                >
+                  🥾 Trails
+                </button>
+              </div>
             </div>
           </div>
         </div>

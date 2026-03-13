@@ -16,9 +16,10 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 type BaseLayer = "street" | "satellite";
-type OverlayLayer = "none" | "geology" | "soil";
+type OverlayLayer = "none" | "geology" | "soil" | "trails";
 
-const GEO_TILES = "https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png";
+const GEO_TILES    = "https://tiles.macrostrat.org/carto/{z}/{x}/{y}.png";
+const TRAILS_TILES = "https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png";
 const SOIL_WMS =
   "https://maps.isric.org/mapserv?map=/map/wrb.map&SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&FORMAT=image%2Fpng&TRANSPARENT=TRUE&LAYERS=MostProbable&WIDTH=256&HEIGHT=256&CRS=EPSG%3A3857&BBOX={bbox-epsg-3857}";
 
@@ -85,10 +86,10 @@ const INITIAL_STYLE: any = {
 };
 
 function safeRemoveOverlays(map: any) {
-  for (const id of ["geology-overlay", "soil-overlay"]) {
+  for (const id of ["geology-overlay", "soil-overlay", "trails-overlay"]) {
     try { if (map.getLayer(id)) map.removeLayer(id); } catch {}
   }
-  for (const id of ["geology", "soil"]) {
+  for (const id of ["geology", "soil", "trails-src"]) {
     try { if (map.getSource(id)) map.removeSource(id); } catch {}
   }
 }
@@ -101,6 +102,15 @@ function safeAddOverlay(map: any, overlay: OverlayLayer) {
     } else if (overlay === "soil") {
       map.addSource("soil", { type: "raster", tiles: [SOIL_WMS], tileSize: 256, attribution: "© ISRIC" });
       map.addLayer({ id: "soil-overlay", type: "raster", source: "soil", paint: { "raster-opacity": 0.65 } });
+    } else if (overlay === "trails") {
+      map.addSource("trails-src", {
+        type: "raster",
+        tiles: [TRAILS_TILES],
+        tileSize: 256,
+        attribution: "© <a href='https://www.waymarkedtrails.org'>Waymarked Trails</a>, © OpenStreetMap contributors",
+        minzoom: 5,
+      });
+      map.addLayer({ id: "trails-overlay", type: "raster", source: "trails-src", paint: { "raster-opacity": 0.9 } });
     }
   } catch {}
 }
@@ -175,7 +185,7 @@ export default function MapViewPage() {
       // Click handler — reads overlayLayerRef (never stale)
       map.on("click", async (e: any) => {
         const over = overlayLayerRef.current;
-        if (over === "none") return;
+        if (over === "none" || over === "trails") return;
         const { lng, lat } = e.lngLat;
         setGeoInfo({ loading: true, lngLat: [lng, lat] });
 
@@ -426,6 +436,7 @@ export default function MapViewPage() {
               <option value="none">No Overlay</option>
               <option value="geology">Rock Formations (Macrostrat)</option>
               <option value="soil">Soil Types (SoilGrids)</option>
+              <option value="trails">Hiking Trails (Waymarked)</option>
             </select>
             <Layers className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
           </div>
@@ -469,7 +480,7 @@ export default function MapViewPage() {
             <div className="flex items-center justify-between">
               <h3 className="font-semibold font-display text-sm flex items-center gap-2">
                 <Layers className="w-4 h-4 text-primary" />
-                {overlayLayer === "geology" ? "Rock Formation" : "Soil Data"}
+                {overlayLayer === "geology" ? "Rock Formation" : overlayLayer === "trails" ? "Trail Info" : "Soil Data"}
               </h3>
               <button onClick={() => setGeoInfo(null)} className="text-muted-foreground hover:text-foreground text-lg leading-none">×</button>
             </div>
