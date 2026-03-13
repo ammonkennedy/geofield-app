@@ -12,6 +12,8 @@ import { Label } from "@/components/ui/label";
 import { Droplet, Mountain, Sprout, ArrowLeft, Save, Camera, X, MapPin, Loader2, Plus, GripVertical, Mic, MicOff } from "lucide-react";
 import { useSamplesMutations } from "@/hooks/use-geofield";
 import { useGetFolders, useGetSample } from "@workspace/api-client-react";
+import { useToast } from "@/hooks/use-toast";
+import { enqueue } from "@/lib/offline-queue";
 import { BaseFields, WaterFields, RockFields, SoilFields } from "@/components/fields/SchemaForms";
 import { CompassModal } from "@/components/CompassModal";
 import { cn } from "@/lib/utils";
@@ -45,6 +47,7 @@ export default function SampleEntry() {
   const [, setLocation] = useLocation();
   const { id } = useParams();
   const isEdit = Boolean(id && id !== "new");
+  const { toast } = useToast();
 
   const { data: existingSample, isLoading: loadingSample } = useGetSample(Number(id), {
     query: { enabled: isEdit }
@@ -219,7 +222,16 @@ export default function SampleEntry() {
     };
 
     if (isEdit && id) {
+      // Edits always go to the server (the form loaded from server data)
       updateSample.mutate({ id: Number(id), data: payload }, { onSuccess: () => setLocation("/") });
+    } else if (!navigator.onLine) {
+      // Offline — queue locally and navigate back
+      enqueue(payload);
+      toast({
+        title: "Saved offline",
+        description: "Your sample is stored on this device and will sync automatically when you're back online.",
+      });
+      setLocation("/");
     } else {
       createSample.mutate({ data: payload }, { onSuccess: () => setLocation("/") });
     }

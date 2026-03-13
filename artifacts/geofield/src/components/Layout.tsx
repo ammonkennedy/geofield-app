@@ -3,9 +3,10 @@ import { Link, useLocation } from "wouter";
 import { useGetCurrentAuthUser, useGetFolders } from "@workspace/api-client-react";
 import { Button } from "./ui/button";
 import { FolderDialog } from "./FolderDialog";
-import { Pickaxe, FolderOpen, MapPin, LogOut, ChevronRight, Menu, Plus, Map, Bookmark } from "lucide-react";
+import { Pickaxe, FolderOpen, MapPin, LogOut, ChevronRight, Menu, Plus, Map, Bookmark, WifiOff, RefreshCw, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { loadTrips, type Trip } from "@/pages/trip-planner";
+import { useOfflineSync } from "@/hooks/use-offline-sync";
 
 export function Layout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
@@ -17,6 +18,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const [trips, setTrips] = useState<Trip[]>(loadTrips);
 
   const user = authData?.user;
+  const { isOnline, queueCount, isSyncing, syncedCount, sync } = useOfflineSync();
 
   // Keep trips list in sync when trips are saved (same tab or other tabs)
   useEffect(() => {
@@ -153,6 +155,31 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
         </div>
 
+        {/* Offline queue indicator */}
+        {queueCount > 0 && (
+          <div className="mx-3 mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="flex items-center gap-1.5 font-semibold">
+                <WifiOff className="w-3.5 h-3.5" />
+                {queueCount} sample{queueCount !== 1 ? "s" : ""} pending sync
+              </span>
+              {isOnline && !isSyncing && (
+                <button
+                  onClick={sync}
+                  className="flex items-center gap-1 text-amber-700 hover:text-amber-900 font-medium underline underline-offset-2"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Sync now
+                </button>
+              )}
+              {isSyncing && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+            </div>
+            <p className="text-amber-700 leading-tight">
+              {isOnline ? "Connected — tap Sync now or wait for auto-sync." : "Will sync when back online."}
+            </p>
+          </div>
+        )}
+
         {/* User footer */}
         <div className="p-4 border-t border-border/50 bg-card mt-auto">
           {user ? (
@@ -178,6 +205,31 @@ export function Layout({ children }: { children: ReactNode }) {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-h-screen relative max-w-full overflow-hidden">
+        {/* Offline / sync banners */}
+        {!isOnline && (
+          <div className="flex items-center gap-2.5 px-4 py-2.5 bg-amber-50 border-b border-amber-200 text-amber-800 text-sm sticky top-0 z-20">
+            <WifiOff className="w-4 h-4 shrink-0" />
+            <span className="flex-1">You're offline. New samples will be saved on this device and synced when connected.</span>
+            {queueCount > 0 && (
+              <span className="font-semibold bg-amber-200 text-amber-900 rounded-full px-2 py-0.5 text-xs">
+                {queueCount} pending
+              </span>
+            )}
+          </div>
+        )}
+        {isOnline && isSyncing && (
+          <div className="flex items-center gap-2.5 px-4 py-2.5 bg-blue-50 border-b border-blue-200 text-blue-800 text-sm sticky top-0 z-20">
+            <RefreshCw className="w-4 h-4 shrink-0 animate-spin" />
+            <span>Syncing {queueCount} offline sample{queueCount !== 1 ? "s" : ""} to the server…</span>
+          </div>
+        )}
+        {isOnline && syncedCount > 0 && !isSyncing && (
+          <div className="flex items-center gap-2.5 px-4 py-2.5 bg-green-50 border-b border-green-200 text-green-800 text-sm sticky top-0 z-20">
+            <Check className="w-4 h-4 shrink-0" />
+            <span>{syncedCount} offline sample{syncedCount !== 1 ? "s" : ""} synced successfully.</span>
+          </div>
+        )}
+
         <div className="flex-1 p-4 md:p-8 md:max-w-6xl mx-auto w-full">
           {children}
         </div>
