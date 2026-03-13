@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Layout } from "@/components/Layout";
 import { useGetSamples, useGetFolders } from "@workspace/api-client-react";
-import { MapPin, FolderOpen, AlertCircle, Layers, Satellite, Map, Mountain, Camera } from "lucide-react";
+import { MapPin, FolderOpen, AlertCircle, Layers, Satellite, Map as MapIcon, Mountain, Camera } from "lucide-react";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { RoadCamPanel, type RoadCam } from "@/components/RoadCamPanel";
 
@@ -515,7 +515,7 @@ export default function MapViewPage() {
                 onClick={() => setBaseLayer(bl)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${baseLayer === bl ? "bg-primary text-primary-foreground shadow" : "text-muted-foreground hover:text-foreground"}`}
               >
-                {bl === "satellite" ? <Satellite className="w-3.5 h-3.5" /> : <Map className="w-3.5 h-3.5" />}
+                {bl === "satellite" ? <Satellite className="w-3.5 h-3.5" /> : <MapIcon className="w-3.5 h-3.5" />}
                 {bl.charAt(0).toUpperCase() + bl.slice(1)}
               </button>
             ))}
