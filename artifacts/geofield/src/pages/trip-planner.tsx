@@ -153,14 +153,24 @@ export default function TripPlannerPage() {
   const mapMarkersRef    = useRef<any[]>([]);
   const mapLoadedRef     = useRef(false);
   const overlayLayerRef  = useRef<OverlayLayer>("none");
+  const pinModeRef       = useRef(false);
 
-  // Site form state
+  // Interaction state
+  const [pinMode,         setPinMode]         = useState(false);
+  const [geoInfo,         setGeoInfo]         = useState<{ loading: boolean; data?: Record<string, string> | null; error?: string; lngLat?: [number, number] } | null>(null);
   const [pendingCoords,   setPendingCoords]   = useState<[number, number] | null>(null);
   const [pendingSiteName, setPendingSiteName] = useState("");
   const [pendingSiteDesc, setPendingSiteDesc] = useState("");
 
-  // Keep overlayLayerRef in sync
-  useEffect(() => { overlayLayerRef.current = overlayLayer; }, [overlayLayer]);
+  // Keep refs in sync
+  useEffect(() => { overlayLayerRef.current = overlayLayer; setGeoInfo(null); }, [overlayLayer]);
+  useEffect(() => {
+    pinModeRef.current = pinMode;
+    // Update map cursor when mode changes
+    if (mapInstanceRef.current) {
+      try { mapInstanceRef.current.getCanvas().style.cursor = pinMode ? "crosshair" : "default"; } catch {}
+    }
+  }, [pinMode]);
 
   // Create a new trip when navigating to /trip/new
   useEffect(() => {
@@ -229,6 +239,8 @@ export default function TripPlannerPage() {
       }
       mapLoadedRef.current = false;
       setPendingCoords(null);
+      setPinMode(false);
+      setGeoInfo(null);
       return;
     }
 
@@ -254,7 +266,7 @@ export default function TripPlannerPage() {
 
           map.addControl(new L.NavigationControl({ visualizePitch: true }), "top-right");
           map.addControl(new L.ScaleControl(), "bottom-left");
-          map.getCanvas().style.cursor = "crosshair";
+          map.getCanvas().style.cursor = "default";
 
           map.on("load", () => {
             if (cancelled) return;
@@ -282,13 +294,75 @@ export default function TripPlannerPage() {
             sitesSnapshot.forEach((s) => addSiteMarker(L, map, s));
           });
 
-          // Click to pick a location
-          map.on("click", (e: any) => {
+          // Click: pin mode → place site; otherwise → query overlay info
+          map.on("click", async (e: any) => {
             if (cancelled) return;
             const { lng, lat } = e.lngLat;
-            setPendingCoords([lat, lng]);
-            setPendingSiteName("");
-            setPendingSiteDesc("");
+
+            if (pinModeRef.current) {
+              // Place a sample site
+              setPendingCoords([lat, lng]);
+              setPendingSiteName("");
+              setPendingSiteDesc("");
+              setPinMode(false);
+              map.getCanvas().style.cursor = "default";
+              return;
+            }
+
+            // Query overlay info (mirrors map-view click handler)
+            const over = overlayLayerRef.current;
+            if (over === "none" || over === "trails") return;
+            setGeoInfo({ loading: true, lngLat: [lng, lat] });
+
+            if (over === "geology") {
+              try {
+                const r = await fetch(
+                  `https://macrostrat.org/api/v2/geologic_units/burwell?lat=${lat}&lng=${lng}&response=short`
+                );
+                const d = await r.json();
+                const unit = d?.success?.data?.[0];
+                if (unit) {
+                  setGeoInfo({
+                    loading: false, lngLat: [lng, lat],
+                    data: {
+                      Formation: unit.strat_name_long || unit.map_unit_name || "Unknown",
+                      Age:       [unit.t_int_name, unit.b_int_name].filter(Boolean).join(" – ") || "—",
+                      Era:       unit.era || "—",
+                      Lithology: unit.lith || "—",
+                      Description: unit.descrip || "—",
+                    },
+                  });
+                } else {
+                  setGeoInfo({ loading: false, lngLat: [lng, lat], data: { Note: "No formation data at this location." } });
+                }
+              } catch {
+                setGeoInfo({ loading: false, lngLat: [lng, lat], error: "Failed to load geological data." });
+              }
+            }
+
+            if (over === "soil") {
+              try {
+                const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+                const r = await fetch(`${base}/api/proxy/soil?lat=${lat}&lng=${lng}`);
+                const d = await r.json();
+                if (d?.noData || d?.error) {
+                  setGeoInfo({ loading: false, lngLat: [lng, lat], data: { Note: "No USDA soil data here. Coverage is US-only." } });
+                } else {
+                  const info: Record<string, string> = {};
+                  if (d.mapUnit) info["Map Unit"] = d.mapUnit;
+                  if (d.soilSeries) info["Soil Series"] = d.soilSeries;
+                  if (d.taxClass) info["Taxonomic Class"] = d.taxClass;
+                  if (d.order) info["Order"] = d.order;
+                  if (d.suborder) info["Suborder"] = d.suborder;
+                  if (d.drainage) info["Drainage Class"] = d.drainage;
+                  if (d.slope != null) info["Slope (%)"] = String(d.slope);
+                  if (d.pctComponent != null) info["Composition"] = `${d.pctComponent}% of map unit`;
+                  setGeoInfo({ loading: false, lngLat: [lng, lat], data: info });
+                }
+              } catch {
+                setGeoInfo({ loading: false, lngLat: [lng, lat], error: "Soil data unavailable for this location." });
+              }
+            }
           });
         });
       });
@@ -505,10 +579,10 @@ export default function TripPlannerPage() {
               <div>
                 <h2 className="font-display font-bold text-xl flex items-center gap-2">
                   <Map className="w-5 h-5 text-primary" />
-                  Pick Sample Sites
+                  Trip Planning Map
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Click anywhere on the map to place a future sample site
+                  Explore overlays by clicking · use "Add Sample Spot" to pin a site
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -560,6 +634,19 @@ export default function TripPlannerPage() {
                 </select>
                 <Layers className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
               </div>
+
+              {/* Add Sample Spot button — arms pin mode */}
+              <button
+                onClick={() => { setPinMode((p) => !p); setGeoInfo(null); setPendingCoords(null); }}
+                className={`ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all shadow-sm ${
+                  pinMode
+                    ? "bg-primary text-primary-foreground border-primary animate-pulse"
+                    : "bg-card border-border text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <MapPin className="w-3.5 h-3.5" />
+                {pinMode ? "Click map to place…" : "Add Sample Spot"}
+              </button>
             </div>
 
             {/* Map container */}
@@ -567,8 +654,55 @@ export default function TripPlannerPage() {
               {/* Hint banner */}
               {!pendingCoords && (
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-card/95 backdrop-blur border border-border rounded-xl px-4 py-2.5 shadow-lg text-sm flex items-center gap-2 pointer-events-none whitespace-nowrap">
-                  <Navigation className="w-4 h-4 text-primary shrink-0" />
-                  Click anywhere on the map to pin a sample site
+                  {pinMode ? (
+                    <>
+                      <MapPin className="w-4 h-4 text-primary shrink-0 animate-pulse" />
+                      Click the map to place a sample site
+                    </>
+                  ) : overlayLayer !== "none" && overlayLayer !== "trails" ? (
+                    <>
+                      <Layers className="w-4 h-4 text-primary shrink-0" />
+                      Click the map to query {overlayLayer === "geology" ? "rock formation" : "soil"} data
+                    </>
+                  ) : (
+                    <>
+                      <Navigation className="w-4 h-4 text-primary shrink-0" />
+                      Use "Add Sample Spot" to pin a site on the map
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Geo info panel */}
+              {geoInfo && !pendingCoords && (
+                <div className="absolute top-4 left-4 z-10 w-64 bg-card border border-border rounded-2xl shadow-lg p-4 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-sm flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5 text-primary" />
+                      {overlayLayer === "geology" ? "Rock Formation" : "Soil Data"}
+                    </h3>
+                    <button onClick={() => setGeoInfo(null)} className="text-muted-foreground hover:text-foreground text-lg leading-none">×</button>
+                  </div>
+                  {geoInfo.lngLat && (
+                    <p className="text-xs text-muted-foreground">📍 {geoInfo.lngLat[1].toFixed(4)}, {geoInfo.lngLat[0].toFixed(4)}</p>
+                  )}
+                  {geoInfo.loading && (
+                    <div className="space-y-1.5">{[1,2,3].map((i) => <div key={i} className="h-3.5 bg-muted animate-pulse rounded" />)}</div>
+                  )}
+                  {geoInfo.error && <p className="text-xs text-destructive">{geoInfo.error}</p>}
+                  {geoInfo.data && !geoInfo.loading && (
+                    <div className="space-y-2">
+                      {Object.entries(geoInfo.data).map(([k, v]) => (
+                        <div key={k}>
+                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{k}</p>
+                          <p className="text-xs text-foreground mt-0.5">{v || "—"}</p>
+                        </div>
+                      ))}
+                      <p className="text-xs text-muted-foreground pt-1.5 border-t border-border">
+                        {overlayLayer === "geology" ? "Source: Macrostrat" : "Source: USDA SSURGO"}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
