@@ -13,7 +13,7 @@ const TYPE_COLORS: Record<string, string> = {
 const TYPE_LABELS: Record<string, string> = {
   water: "Water",
   rock: "Rock",
-  soil_sand: "Soil/Sand",
+  soil_sand: "Soil/Sediment",
 };
 
 type BaseLayer = "street" | "satellite";
@@ -226,24 +226,27 @@ export default function MapViewPage() {
 
         if (over === "soil") {
           try {
-            const r = await fetch(
-              `https://casoilresource.lawr.ucdavis.edu/api/point/?lat=${lat}&lon=${lng}`
-            );
+            const base = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
+            const r = await fetch(`${base}/api/proxy/soil?lat=${lat}&lng=${lng}`);
             const d = await r.json();
-            const series = d?.series?.[0];
-            if (series) {
+
+            if (d?.noData || d?.error) {
               setGeoInfo({
                 loading: false,
                 lngLat: [lng, lat],
-                data: {
-                  "Soil Series": series.series || "Unknown",
-                  "Taxonomic Class": series.taxclname || "—",
-                  "Land Use": series.landuse || "—",
-                  "Family": series.family || "—",
-                },
+                data: { Note: "No USDA soil survey data at this location. Coverage is US-only." },
               });
             } else {
-              setGeoInfo({ loading: false, lngLat: [lng, lat], data: { Note: "No soil data at this location." } });
+              const info: Record<string, string> = {};
+              if (d.mapUnit)      info["Map Unit"]         = d.mapUnit;
+              if (d.soilSeries)   info["Soil Series"]      = d.soilSeries;
+              if (d.taxClass)     info["Taxonomic Class"]  = d.taxClass;
+              if (d.order)        info["Order"]            = d.order;
+              if (d.suborder)     info["Suborder"]         = d.suborder;
+              if (d.drainage)     info["Drainage Class"]   = d.drainage;
+              if (d.slope != null) info["Slope (%)"]       = String(d.slope);
+              if (d.pctComponent != null) info["Composition"] = `${d.pctComponent}% of map unit`;
+              setGeoInfo({ loading: false, lngLat: [lng, lat], data: info });
             }
           } catch {
             setGeoInfo({ loading: false, lngLat: [lng, lat], error: "Soil data unavailable for this location." });
@@ -460,7 +463,7 @@ export default function MapViewPage() {
             <Layers className="w-3.5 h-3.5 text-primary shrink-0" />
             {overlayLayer === "geology"
               ? "Click anywhere on the map to get rock formation and geological age data."
-              : "Click anywhere on the map to get soil classification data."}
+              : "Click anywhere on the map to get WRB soil classification (SoilGrids / ISRIC)."}
           </div>
         )}
 

@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useGetCurrentAuthUser, useGetFolders } from "@workspace/api-client-react";
 import { Button } from "./ui/button";
 import { FolderDialog } from "./FolderDialog";
-import { Pickaxe, FolderOpen, MapPin, LogOut, ChevronRight, Menu, Plus, Map } from "lucide-react";
+import { Pickaxe, FolderOpen, MapPin, LogOut, ChevronRight, Menu, Plus, Map, Bookmark } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function Layout({ children }: { children: ReactNode }) {
@@ -64,6 +64,17 @@ export function Layout({ children }: { children: ReactNode }) {
               >
                 <Map className="w-4 h-4" />
                 Map View
+              </Link>
+              <Link
+                href="/trip"
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200",
+                  location === "/trip" ? "bg-primary/10 text-primary" : "text-foreground hover:bg-muted"
+                )}
+                onClick={() => setSidebarOpen(false)}
+              >
+                <Bookmark className="w-4 h-4" />
+                Plan a Trip
               </Link>
             </nav>
           </div>

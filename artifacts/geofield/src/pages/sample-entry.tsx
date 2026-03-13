@@ -15,11 +15,12 @@ import { BaseFields, WaterFields, RockFields, SoilFields } from "@/components/fi
 import { CompassModal } from "@/components/CompassModal";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
+import { latLngToUTM, parseCoords as parseCoordsUTM } from "@/lib/utm";
 
 const sampleTypes = [
   { id: 'water', label: 'Water', icon: Droplet, color: 'text-[var(--color-water)]', bg: 'bg-[var(--color-water)]/10' },
   { id: 'rock', label: 'Rock', icon: Mountain, color: 'text-[var(--color-rock)]', bg: 'bg-[var(--color-rock)]/10' },
-  { id: 'soil_sand', label: 'Soil/Sand', icon: Sprout, color: 'text-[var(--color-soil)]', bg: 'bg-[var(--color-soil)]/10' },
+  { id: 'soil_sand', label: 'Soil/Sediment', icon: Sprout, color: 'text-[var(--color-soil)]', bg: 'bg-[var(--color-soil)]/10' },
 ] as const;
 
 const formSchema = z.object({
@@ -103,6 +104,7 @@ export default function SampleEntry() {
   }, [existingSample, isEdit, reset]);
 
   const currentType = watch("sampleType");
+  const locationValue = watch("fields.location") as string | undefined;
   const isPending = createSample.isPending || updateSample.isPending;
 
   const compressImage = (file: File): Promise<string> => {
@@ -251,6 +253,22 @@ export default function SampleEntry() {
                 )}
               </h3>
               <BaseFields register={register} errors={errors} />
+              {/* UTM display */}
+              {(() => {
+                const coords = parseCoordsUTM(locationValue);
+                if (!coords) return null;
+                const utm = latLngToUTM(coords[0], coords[1]);
+                return (
+                  <div className="flex items-start gap-2.5 bg-muted/40 border border-border rounded-lg px-3.5 py-2.5 text-sm">
+                    <MapPin className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-0.5">UTM Coordinates (WGS84)</p>
+                      <p className="font-mono text-sm text-foreground">{utm.display}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Zone {utm.zone}{utm.letter} · {utm.hemisphere === "N" ? "Northern" : "Southern"} Hemisphere</p>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="h-px bg-border/60 w-full" />

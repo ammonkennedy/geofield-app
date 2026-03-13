@@ -8,6 +8,7 @@ import Login from "@/pages/login";
 import Dashboard from "@/pages/dashboard";
 import SampleEntry from "@/pages/sample-entry";
 import MapViewPage from "@/pages/map-view";
+import TripPlannerPage from "@/pages/trip-planner";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,9 @@ function Router() {
       </Route>
       <Route path="/map">
         <ProtectedRoute component={MapViewPage} />
+      </Route>
+      <Route path="/trip">
+        <ProtectedRoute component={TripPlannerPage} />
       </Route>
       <Route path="/sample/:id">
         <ProtectedRoute component={SampleEntry} />
