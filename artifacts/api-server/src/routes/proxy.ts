@@ -65,42 +65,52 @@ proxyRouter.get("/proxy/soil", async (req, res) => {
   }
 });
 
-// Road camera proxy — fetches 511NY camera list, filters active cameras with live HLS streams
-// and returns a bbox-filtered subset to avoid sending all 1500+ cameras to the client.
-let roadCamCache: { data: any[]; fetchedAt: number } | null = null;
-const CAM_CACHE_TTL = 5 * 60 * 1000; // 5 min
+// National Park webcam proxy — fetches from the NPS API and caches aggressively
+// to stay within the DEMO_KEY rate limit (50 req/day). Cache TTL = 60 min.
+let parkCamCache: { data: any[]; fetchedAt: number } | null = null;
+const PARK_CAM_TTL = 60 * 60 * 1000; // 60 min
 
-proxyRouter.get("/proxy/roadcams", async (req, res) => {
+proxyRouter.get("/proxy/parkcams", async (req, res) => {
   const { minLat, maxLat, minLng, maxLng } = req.query as Record<string, string>;
 
   try {
-    // Refresh cache if stale
-    if (!roadCamCache || Date.now() - roadCamCache.fetchedAt > CAM_CACHE_TTL) {
+    if (!parkCamCache || Date.now() - parkCamCache.fetchedAt > PARK_CAM_TTL) {
       const r = await fetch(
-        "https://511ny.org/api/getcameras?key=&format=json&lang=en",
+        "https://developer.nps.gov/api/v1/webcams?api_key=DEMO_KEY&limit=500",
         { headers: { Accept: "application/json" } }
       );
-      if (!r.ok) throw new Error("511NY upstream error");
-      const raw = (await r.json()) as any[];
-      roadCamCache = {
+      if (!r.ok) throw new Error(`NPS API error: ${r.status}`);
+      const raw = (await r.json()) as { data: any[] };
+
+      parkCamCache = {
         fetchedAt: Date.now(),
-        data: raw
-          .filter((c) => !c.Disabled && !c.Blocked && c.VideoUrl && c.Latitude && c.Longitude)
-          .map((c) => ({
-            id: c.ID as string,
-            name: c.Name as string,
-            road: c.RoadwayName as string,
-            direction: c.DirectionOfTravel as string,
-            lat: c.Latitude as number,
-            lng: c.Longitude as number,
-            videoUrl: c.VideoUrl as string,
-          })),
+        data: raw.data
+          .filter((c) => c.latitude && c.longitude && c.status !== "Inactive")
+          .map((c) => {
+            // NPS API bug: image URL sometimes has double "https://www.nps.gov" prefix
+            const rawImgUrl: string = c.images?.[0]?.url ?? "";
+            const imageUrl = rawImgUrl
+              ? rawImgUrl.replace("https://www.nps.govhttps://", "https://")
+              : null;
+            return {
+              id: c.id as string,
+              title: c.title as string,
+              park: (c.relatedParks?.[0]?.fullName ?? "National Park") as string,
+              parkCode: (c.relatedParks?.[0]?.parkCode ?? "") as string,
+              lat: parseFloat(c.latitude),
+              lng: parseFloat(c.longitude),
+              status: c.status as string,
+              isStreaming: !!c.isStreaming,
+              imageUrl,
+              viewerUrl: c.url as string,
+              credit: c.credit as string | null,
+            };
+          }),
       };
     }
 
-    let cameras = roadCamCache.data;
+    let cameras = parkCamCache.data;
 
-    // Spatial filter if bbox provided
     if (minLat && maxLat && minLng && maxLng) {
       const [mn_lat, mx_lat, mn_lng, mx_lng] = [minLat, maxLat, minLng, maxLng].map(Number);
       cameras = cameras.filter(
@@ -108,10 +118,9 @@ proxyRouter.get("/proxy/roadcams", async (req, res) => {
       );
     }
 
-    // Cap at 200 cameras per request
-    return res.json({ cameras: cameras.slice(0, 200), source: "511ny", total: cameras.length });
+    return res.json({ cameras, source: "nps", total: cameras.length });
   } catch (err) {
-    return res.status(502).json({ error: "Failed to fetch road camera data" });
+    return res.status(502).json({ error: "Failed to fetch NPS webcam data" });
   }
 });
 

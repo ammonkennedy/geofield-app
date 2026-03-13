@@ -167,7 +167,7 @@ export default function MapViewPage() {
     setCamsLoading(true);
     try {
       const r = await fetch(
-        `${base}/api/proxy/roadcams?minLat=${bounds.getSouth()}&maxLat=${bounds.getNorth()}&minLng=${bounds.getWest()}&maxLng=${bounds.getEast()}`
+        `${base}/api/proxy/parkcams?minLat=${bounds.getSouth()}&maxLat=${bounds.getNorth()}&minLng=${bounds.getWest()}&maxLng=${bounds.getEast()}`
       );
       const d = await r.json();
       setCameras(d.cameras ?? []);
@@ -191,7 +191,7 @@ export default function MapViewPage() {
         const el = document.createElement("div");
         el.style.cssText = [
           "width:28px;height:28px;border-radius:50%;",
-          "background:#1d4ed8;border:2px solid white;",
+          "background:#15803d;border:2px solid white;",
           "box-shadow:0 2px 8px rgba(0,0,0,0.4);",
           "display:flex;align-items:center;justify-content:center;",
           "cursor:pointer;transition:transform 0.1s;",
@@ -522,18 +522,18 @@ export default function MapViewPage() {
             <Layers className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
           </div>
 
-          {/* Road Cameras toggle */}
+          {/* Park Cameras toggle */}
           <button
             onClick={() => setCamsEnabled((v) => !v)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all shadow-sm ${
               camsEnabled
-                ? "bg-blue-600 text-white border-blue-600"
+                ? "bg-green-700 text-white border-green-700"
                 : "bg-card border-border text-muted-foreground hover:text-foreground"
             }`}
-            title="Toggle live road cameras (New York state)"
+            title="Toggle National Park webcams"
           >
             <Camera className="w-3.5 h-3.5" />
-            {camsLoading ? "Loading…" : `Road Cams${camsEnabled && cameras.length > 0 ? ` (${cameras.length})` : ""}`}
+            {camsLoading ? "Loading…" : `Park Cams${camsEnabled && cameras.length > 0 ? ` (${cameras.length})` : ""}`}
           </button>
 
           {/* Legend */}
@@ -556,12 +556,11 @@ export default function MapViewPage() {
           </div>
         )}
         {camsEnabled && (
-          <div className="text-xs text-muted-foreground bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 flex items-center gap-2">
-            <Camera className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+          <div className="text-xs text-muted-foreground bg-green-50 border border-green-200 rounded-lg px-3 py-2 flex items-center gap-2">
+            <Camera className="w-3.5 h-3.5 text-green-700 shrink-0" />
             <span>
-              <strong className="text-blue-700">{cameras.length > 0 ? `${cameras.length} live cameras` : "No cameras"}</strong>
-              {cameras.length > 0 ? " in this view — click a blue pin to watch the stream." : " in the current view."}
-              {" "}Coverage: New York state (511NY · NYSDOT).
+              <strong className="text-green-800">{cameras.length > 0 ? `${cameras.length} park webcam${cameras.length !== 1 ? "s" : ""}` : "No park cameras"}</strong>
+              {cameras.length > 0 ? " in this view — click a green pin to view. Live streams and reference photos from NPS." : " in the current view. Pan to a national park area."}
             </span>
           </div>
         )}
