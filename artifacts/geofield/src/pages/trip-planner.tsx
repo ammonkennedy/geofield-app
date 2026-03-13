@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useLocation, useParams } from "wouter";
 import {
-  MapPin, Plus, Trash2, Save, Map, X, Navigation, Edit3, Bookmark, ChevronLeft,
+  MapPin, Plus, Trash2, Save, Map, X, Navigation, Edit3, Bookmark,
 } from "lucide-react";
 import { Layout } from "@/components/Layout";
 import { Button } from "@/components/ui/button";
@@ -42,179 +42,23 @@ export function saveTrips(trips: Trip[]) {
   window.dispatchEvent(new CustomEvent("trips-updated"));
 }
 
-// ── Site Picker Map (embedded) ────────────────────────────────────────────────
-function SitePickerMap({
-  onAddSite,
-  existingSites,
-}: {
-  onAddSite: (site: Omit<PlannedSite, "id" | "addedAt">) => void;
-  existingSites: PlannedSite[];
-}) {
-  const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<any>(null);
-  const markersRef = useRef<any[]>([]);
-  const [pendingCoords, setPendingCoords] = useState<[number, number] | null>(null);
-  const [siteName, setSiteName] = useState("");
-  const [siteDesc, setSiteDesc] = useState("");
+const MAP_MODAL_HEIGHT = "85vh";
+const MAP_HEADER_PX = 88; // approximate header height in px
 
-  useEffect(() => {
-    // Delay initialization so the container has rendered with proper dimensions
-    const timer = setTimeout(() => {
-      if (!mapContainerRef.current || mapRef.current) return;
-
-      import("maplibre-gl").then((L) => {
-        if (!mapContainerRef.current || mapRef.current) return;
-
-        const map = new L.Map({
-          container: mapContainerRef.current!,
-          style: {
-            version: 8 as const,
-            sources: {
-              satellite: {
-                type: "raster" as const,
-                tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
-                tileSize: 256,
-                attribution: "© Esri",
-              },
-              terrain: {
-                type: "raster-dem" as const,
-                tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
-                tileSize: 256,
-                maxzoom: 15,
-                encoding: "terrarium" as const,
-              },
-            },
-            layers: [{ id: "satellite", type: "raster" as const, source: "satellite" }],
-            terrain: { source: "terrain", exaggeration: 1.3 },
-          },
-          center: [-98.35, 39.5],
-          zoom: 4,
-          pitch: 25,
-          maxPitch: 85,
-        });
-        mapRef.current = map;
-        map.addControl(new L.NavigationControl({ visualizePitch: true }), "top-right");
-        map.getCanvas().style.cursor = "crosshair";
-
-        // Add existing site markers
-        map.on("load", () => {
-          existingSites.forEach((s) => addSiteMarker(L, map, s));
-        });
-
-        map.on("click", (e: any) => {
-          const { lng, lat } = e.lngLat;
-          setPendingCoords([lat, lng]);
-          setSiteName("");
-          setSiteDesc("");
-        });
-      });
-    }, 200);
-
-    return () => {
-      clearTimeout(timer);
-      markersRef.current.forEach((m) => { try { m.remove(); } catch {} });
-      markersRef.current = [];
-      if (mapRef.current) { try { mapRef.current.remove(); } catch {} mapRef.current = null; }
-    };
-  }, []);
-
-  function addSiteMarker(L: any, map: any, site: { name: string; lat: number; lng: number; description?: string }) {
-    const el = document.createElement("div");
-    el.style.cssText = "display:flex;align-items:center;justify-content:center;width:32px;height:32px;background:#155e4e;border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.4);font-size:15px;cursor:pointer;";
-    el.textContent = "⭐";
-
-    const popup = new L.Popup({ closeButton: false, offset: [0, -18] }).setHTML(
-      `<div style="font-family:system-ui,sans-serif;"><strong>${site.name}</strong>${site.description ? `<br/><span style="font-size:12px;color:#555;">${site.description}</span>` : ""}<br/><span style="font-size:11px;color:#888;">${site.lat.toFixed(5)}, ${site.lng.toFixed(5)}</span></div>`
-    );
-
-    const marker = new L.Marker({ element: el, anchor: "center" }).setLngLat([site.lng, site.lat]).addTo(map);
-    el.addEventListener("mouseenter", () => popup.setLngLat([site.lng, site.lat]).addTo(map));
-    el.addEventListener("mouseleave", () => { try { popup.remove(); } catch {} });
-    markersRef.current.push(marker);
-    return marker;
-  }
-
-  const handleAddSite = () => {
-    if (!pendingCoords || !siteName.trim()) return;
-    const site: Omit<PlannedSite, "id" | "addedAt"> = {
-      name: siteName.trim(),
-      description: siteDesc.trim(),
-      lat: pendingCoords[0],
-      lng: pendingCoords[1],
-    };
-    onAddSite(site);
-    // Add marker to map
-    import("maplibre-gl").then((L) => {
-      if (mapRef.current) addSiteMarker(L, mapRef.current, { ...site });
-    });
-    setPendingCoords(null);
-    setSiteName("");
-    setSiteDesc("");
-  };
-
-  return (
-    <div className="relative w-full h-full">
-      <div ref={mapContainerRef} className="absolute inset-0" />
-
-      {!pendingCoords && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-card/95 backdrop-blur border border-border rounded-xl px-4 py-2.5 shadow-lg text-sm flex items-center gap-2 pointer-events-none">
-          <Navigation className="w-4 h-4 text-primary" />
-          Click anywhere on the map to pin a sample site
-        </div>
-      )}
-
-      {pendingCoords && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-card border border-border rounded-2xl shadow-xl p-5 w-80">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold font-display flex items-center gap-2 text-base">
-              <MapPin className="w-4 h-4 text-primary" />
-              New Sample Site
-            </h3>
-            <button onClick={() => setPendingCoords(null)} className="text-muted-foreground hover:text-foreground">
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground mb-3 font-mono bg-muted/50 rounded px-2 py-1">
-            {pendingCoords[0].toFixed(5)}, {pendingCoords[1].toFixed(5)}
-          </p>
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Site Name *</Label>
-              <Input
-                autoFocus
-                value={siteName}
-                onChange={(e) => setSiteName(e.target.value)}
-                placeholder="e.g. River Outcrop A"
-                onKeyDown={(e) => e.key === "Enter" && handleAddSite()}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-semibold">Description (Optional)</Label>
-              <Textarea
-                value={siteDesc}
-                onChange={(e) => setSiteDesc(e.target.value)}
-                placeholder="Target lithology, access notes..."
-                className="h-20 resize-none text-sm"
-              />
-            </div>
-            <Button className="w-full gap-2" onClick={handleAddSite} disabled={!siteName.trim()}>
-              <Plus className="w-4 h-4" />
-              Add Sample Site
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Main Trip Planner Page ────────────────────────────────────────────────────
 export default function TripPlannerPage() {
   const { tripId } = useParams<{ tripId: string }>();
   const [, setLocation] = useLocation();
   const [trips, setTrips] = useState<Trip[]>(loadTrips);
   const [mapOpen, setMapOpen] = useState(false);
   const [saveFlash, setSaveFlash] = useState(false);
+
+  // Map state (managed here so the container div is always in our control)
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const mapMarkersRef = useRef<any[]>([]);
+  const [pendingCoords, setPendingCoords] = useState<[number, number] | null>(null);
+  const [pendingSiteName, setPendingSiteName] = useState("");
+  const [pendingSiteDesc, setPendingSiteDesc] = useState("");
 
   // Create a new trip when navigating to /trip/new
   useEffect(() => {
@@ -264,6 +108,7 @@ export default function TripPlannerPage() {
     if (!activeTrip) return;
     const newSite: PlannedSite = { ...site, id: `site_${Date.now()}`, addedAt: new Date().toISOString() };
     updateTrip({ sites: [...activeTrip.sites, newSite] });
+    return newSite;
   };
 
   const removeSite = (id: string) => {
@@ -271,7 +116,123 @@ export default function TripPlannerPage() {
     updateTrip({ sites: activeTrip.sites.filter((s) => s.id !== id) });
   };
 
-  // No active trip yet (loading state or navigating)
+  // ── Map lifecycle: init when mapOpen=true, destroy when false ──────────────
+  useEffect(() => {
+    if (!mapOpen) {
+      // Destroy the map when modal closes
+      mapMarkersRef.current.forEach((m) => { try { m.remove(); } catch {} });
+      mapMarkersRef.current = [];
+      if (mapInstanceRef.current) {
+        try { mapInstanceRef.current.remove(); } catch {}
+        mapInstanceRef.current = null;
+      }
+      setPendingCoords(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    // Wait two animation frames so the modal has fully painted and has real pixel dimensions
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled || !mapContainerRef.current || mapInstanceRef.current) return;
+
+        import("maplibre-gl").then((L) => {
+          if (cancelled || !mapContainerRef.current || mapInstanceRef.current) return;
+
+          const map = new L.Map({
+            container: mapContainerRef.current!,
+            style: {
+              version: 8 as const,
+              sources: {
+                satellite: {
+                  type: "raster" as const,
+                  tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+                  tileSize: 256,
+                  attribution: "© Esri",
+                },
+                terrain: {
+                  type: "raster-dem" as const,
+                  tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+                  tileSize: 256,
+                  maxzoom: 15,
+                  encoding: "terrarium" as const,
+                },
+              },
+              layers: [{ id: "satellite", type: "raster" as const, source: "satellite" }],
+              terrain: { source: "terrain", exaggeration: 1.3 },
+            },
+            center: [-98.35, 39.5],
+            zoom: 4,
+            pitch: 25,
+            maxPitch: 85,
+          });
+          mapInstanceRef.current = map;
+
+          map.addControl(new L.NavigationControl({ visualizePitch: true }), "top-right");
+          map.getCanvas().style.cursor = "crosshair";
+
+          // Add existing site markers after map loads
+          map.on("load", () => {
+            if (cancelled) return;
+            const sitesSnapshot = activeTrip?.sites ?? [];
+            sitesSnapshot.forEach((s) => addSiteMarker(L, map, s));
+          });
+
+          // Click to pick a location
+          map.on("click", (e: any) => {
+            if (cancelled) return;
+            const { lng, lat } = e.lngLat;
+            setPendingCoords([lat, lng]);
+            setPendingSiteName("");
+            setPendingSiteDesc("");
+          });
+        });
+      });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mapOpen]);
+
+  function addSiteMarker(L: any, map: any, site: { name: string; lat: number; lng: number; description?: string }) {
+    const el = document.createElement("div");
+    el.style.cssText =
+      "display:flex;align-items:center;justify-content:center;width:32px;height:32px;background:#155e4e;border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.4);font-size:15px;cursor:pointer;";
+    el.textContent = "⭐";
+
+    const popup = new L.Popup({ closeButton: false, offset: [0, -18] }).setHTML(
+      `<div style="font-family:system-ui,sans-serif;"><strong>${site.name}</strong>${
+        site.description ? `<br/><span style="font-size:12px;color:#555;">${site.description}</span>` : ""
+      }<br/><span style="font-size:11px;color:#888;">${site.lat.toFixed(5)}, ${site.lng.toFixed(5)}</span></div>`
+    );
+
+    const marker = new L.Marker({ element: el, anchor: "center" }).setLngLat([site.lng, site.lat]).addTo(map);
+    el.addEventListener("mouseenter", () => popup.setLngLat([site.lng, site.lat]).addTo(map));
+    el.addEventListener("mouseleave", () => { try { popup.remove(); } catch {} });
+    mapMarkersRef.current.push(marker);
+  }
+
+  const handleConfirmSite = () => {
+    if (!pendingCoords || !pendingSiteName.trim()) return;
+    const newSite = addSite({
+      name: pendingSiteName.trim(),
+      description: pendingSiteDesc.trim(),
+      lat: pendingCoords[0],
+      lng: pendingCoords[1],
+    });
+    // Add marker immediately
+    if (mapInstanceRef.current && newSite) {
+      import("maplibre-gl").then((L) => {
+        if (mapInstanceRef.current && newSite) addSiteMarker(L, mapInstanceRef.current, newSite);
+      });
+    }
+    setPendingCoords(null);
+    setPendingSiteName("");
+    setPendingSiteDesc("");
+  };
+
   if (!activeTrip && tripId !== "new") {
     return (
       <Layout>
@@ -396,20 +357,23 @@ export default function TripPlannerPage() {
         </div>
       </div>
 
-      {/* Map modal */}
+      {/* ── Map Modal ─────────────────────────────────────────────────────── */}
       {mapOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div
             className="bg-card rounded-3xl shadow-2xl w-full max-w-5xl flex flex-col overflow-hidden"
-            style={{ height: "85vh" }}
+            style={{ height: MAP_MODAL_HEIGHT }}
           >
+            {/* Modal header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
               <div>
                 <h2 className="font-display font-bold text-xl flex items-center gap-2">
                   <Map className="w-5 h-5 text-primary" />
                   Pick Sample Sites
                 </h2>
-                <p className="text-sm text-muted-foreground">Click anywhere on the 3D map to place a future sample site</p>
+                <p className="text-sm text-muted-foreground">
+                  Click anywhere on the map to place a future sample site
+                </p>
               </div>
               <div className="flex items-center gap-3">
                 {(activeTrip?.sites.length ?? 0) > 0 && (
@@ -420,10 +384,69 @@ export default function TripPlannerPage() {
                 <Button onClick={() => setMapOpen(false)}>Done</Button>
               </div>
             </div>
-            <div className="flex-1 relative overflow-hidden p-4">
-              <div className="absolute inset-4 rounded-2xl overflow-hidden border border-border shadow-lg">
-                <SitePickerMap onAddSite={addSite} existingSites={activeTrip?.sites ?? []} />
-              </div>
+
+            {/* Map container — explicit pixel height avoids the 0-dimension bug */}
+            <div className="relative flex-1 overflow-hidden">
+              {/* Hint banner */}
+              {!pendingCoords && (
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-card/95 backdrop-blur border border-border rounded-xl px-4 py-2.5 shadow-lg text-sm flex items-center gap-2 pointer-events-none whitespace-nowrap">
+                  <Navigation className="w-4 h-4 text-primary shrink-0" />
+                  Click anywhere on the map to pin a sample site
+                </div>
+              )}
+
+              {/* Site form popup */}
+              {pendingCoords && (
+                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10 bg-card border border-border rounded-2xl shadow-xl p-5 w-80">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-semibold font-display flex items-center gap-2 text-base">
+                      <MapPin className="w-4 h-4 text-primary" />
+                      New Sample Site
+                    </h3>
+                    <button onClick={() => setPendingCoords(null)} className="text-muted-foreground hover:text-foreground">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-3 font-mono bg-muted/50 rounded px-2 py-1">
+                    {pendingCoords[0].toFixed(5)}, {pendingCoords[1].toFixed(5)}
+                  </p>
+                  <div className="space-y-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Site Name *</Label>
+                      <Input
+                        autoFocus
+                        value={pendingSiteName}
+                        onChange={(e) => setPendingSiteName(e.target.value)}
+                        placeholder="e.g. River Outcrop A"
+                        onKeyDown={(e) => e.key === "Enter" && handleConfirmSite()}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-semibold">Description (Optional)</Label>
+                      <Textarea
+                        value={pendingSiteDesc}
+                        onChange={(e) => setPendingSiteDesc(e.target.value)}
+                        placeholder="Target lithology, access notes..."
+                        className="h-20 resize-none text-sm"
+                      />
+                    </div>
+                    <Button
+                      className="w-full gap-2"
+                      onClick={handleConfirmSite}
+                      disabled={!pendingSiteName.trim()}
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Sample Site
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* THE MAP — fills the remaining modal height via flex-1 */}
+              <div
+                ref={mapContainerRef}
+                style={{ width: "100%", height: "100%" }}
+              />
             </div>
           </div>
         </div>

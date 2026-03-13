@@ -6,9 +6,10 @@ import { z } from "zod";
 import { Layout } from "@/components/Layout";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Droplet, Mountain, Sprout, ArrowLeft, Save, Camera, X, MapPin, Loader2 } from "lucide-react";
+import { Droplet, Mountain, Sprout, ArrowLeft, Save, Camera, X, MapPin, Loader2, Plus, GripVertical } from "lucide-react";
 import { useSamplesMutations } from "@/hooks/use-geofield";
 import { useGetFolders, useGetSample } from "@workspace/api-client-react";
 import { BaseFields, WaterFields, RockFields, SoilFields } from "@/components/fields/SchemaForms";
@@ -32,8 +33,13 @@ const formSchema = z.object({
 });
 
 type FormValues = z.infer<typeof formSchema>;
-
 type GpsStatus = "idle" | "loading" | "success" | "error" | "denied";
+
+interface CustomParam {
+  id: string;
+  label: string;
+  value: string;
+}
 
 export default function SampleEntry() {
   const [, setLocation] = useLocation();
@@ -49,6 +55,7 @@ export default function SampleEntry() {
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("idle");
   const [compassOpen, setCompassOpen] = useState(false);
+  const [customParams, setCustomParams] = useState<CustomParam[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { register, handleSubmit, watch, setValue, reset, formState: { errors } } = useForm<FormValues>({
@@ -65,21 +72,15 @@ export default function SampleEntry() {
   // Auto-fill date+time and GPS on new sample
   useEffect(() => {
     if (isEdit) return;
-    // Set current datetime
     const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
-      .toISOString()
-      .slice(0, 16);
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
     setValue("fields.collectionDate", local);
 
-    // Auto GPS
     if (!navigator.geolocation) { setGpsStatus("error"); return; }
     setGpsStatus("loading");
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const lat = pos.coords.latitude.toFixed(6);
-        const lng = pos.coords.longitude.toFixed(6);
-        setValue("fields.location", `${lat}, ${lng}`);
+        setValue("fields.location", `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`);
         setGpsStatus("success");
       },
       (err) => { setGpsStatus(err.code === 1 ? "denied" : "error"); },
@@ -90,15 +91,23 @@ export default function SampleEntry() {
   useEffect(() => {
     if (existingSample && isEdit) {
       const fields = existingSample.fields as Record<string, any> || {};
-      if (fields.photo) {
-        setPhotoDataUrl(fields.photo);
+      if (fields.photo) setPhotoDataUrl(fields.photo);
+      // Load saved custom params
+      if (Array.isArray(fields.customParams)) {
+        setCustomParams(
+          fields.customParams.map((p: any, i: number) => ({
+            id: `cp_${i}_${Date.now()}`,
+            label: p.label ?? "",
+            value: p.value ?? "",
+          }))
+        );
       }
       reset({
         sampleType: existingSample.sampleType as any,
         sampleId: existingSample.sampleId,
         folderId: existingSample.folderId ? String(existingSample.folderId) : '',
         notes: existingSample.notes || '',
-        fields: { ...fields, photo: undefined }
+        fields: { ...fields, photo: undefined, customParams: undefined },
       });
     }
   }, [existingSample, isEdit, reset]);
@@ -119,8 +128,7 @@ export default function SampleEntry() {
           else { width = Math.round((width * MAX) / height); height = MAX; }
         }
         const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = width; canvas.height = height;
         canvas.getContext("2d")!.drawImage(img, 0, 0, width, height);
         URL.revokeObjectURL(url);
         resolve(canvas.toDataURL("image/jpeg", 0.75));
@@ -134,8 +142,7 @@ export default function SampleEntry() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const compressed = await compressImage(file);
-      setPhotoDataUrl(compressed);
+      setPhotoDataUrl(await compressImage(file));
     } catch {
       const reader = new FileReader();
       reader.onload = (ev) => setPhotoDataUrl(ev.target?.result as string);
@@ -143,16 +150,30 @@ export default function SampleEntry() {
     }
   };
 
+  // Custom param helpers
+  const addCustomParam = () => {
+    setCustomParams((prev) => [...prev, { id: `cp_${Date.now()}`, label: "", value: "" }]);
+  };
+  const updateCustomParam = (id: string, field: "label" | "value", val: string) => {
+    setCustomParams((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: val } : p)));
+  };
+  const removeCustomParam = (id: string) => {
+    setCustomParams((prev) => prev.filter((p) => p.id !== id));
+  };
+
   const onSubmit = (data: FormValues) => {
     const processedFields: Record<string, any> = {};
     Object.entries(data.fields).forEach(([k, v]) => {
       if (v === "") return;
       const num = Number(v);
-      processedFields[k] = !isNaN(num) && typeof v === 'string' && v.trim() !== '' ? num : v;
+      processedFields[k] = !isNaN(num) && typeof v === "string" && v.trim() !== "" ? num : v;
     });
+    if (photoDataUrl) processedFields.photo = photoDataUrl;
 
-    if (photoDataUrl) {
-      processedFields.photo = photoDataUrl;
+    // Include non-empty custom parameters
+    const nonEmptyParams = customParams.filter((p) => p.label.trim());
+    if (nonEmptyParams.length > 0) {
+      processedFields.customParams = nonEmptyParams.map((p) => ({ label: p.label.trim(), value: p.value }));
     }
 
     const payload = {
@@ -160,17 +181,13 @@ export default function SampleEntry() {
       sampleId: data.sampleId,
       folderId: data.folderId ? Number(data.folderId) : null,
       notes: data.notes,
-      fields: processedFields
+      fields: processedFields,
     };
 
     if (isEdit && id) {
-      updateSample.mutate({ id: Number(id), data: payload }, {
-        onSuccess: () => setLocation("/")
-      });
+      updateSample.mutate({ id: Number(id), data: payload }, { onSuccess: () => setLocation("/") });
     } else {
-      createSample.mutate({ data: payload }, {
-        onSuccess: () => setLocation("/")
-      });
+      createSample.mutate({ data: payload }, { onSuccess: () => setLocation("/") });
     }
   };
 
@@ -211,7 +228,11 @@ export default function SampleEntry() {
                   onClick={() => !isEdit && setValue("sampleType", type.id, { shouldValidate: true })}
                   className={cn(
                     "relative overflow-hidden rounded-xl border p-4 cursor-pointer transition-all duration-300",
-                    isSelected ? "border-primary ring-2 ring-primary/20 shadow-md bg-card" : isEdit ? "opacity-50 cursor-not-allowed bg-muted/50 border-transparent" : "border-border bg-card hover:border-primary/50 hover:shadow-sm"
+                    isSelected
+                      ? "border-primary ring-2 ring-primary/20 shadow-md bg-card"
+                      : isEdit
+                      ? "opacity-50 cursor-not-allowed bg-muted/50 border-transparent"
+                      : "border-border bg-card hover:border-primary/50 hover:shadow-sm"
                   )}
                 >
                   {isSelected && <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-primary/10 to-transparent rounded-bl-full" />}
@@ -227,33 +248,31 @@ export default function SampleEntry() {
           </div>
         </div>
 
-        {/* Dynamic Form Area */}
+        {/* Dynamic Form Card */}
         <Card className="overflow-hidden shadow-lg border-border/50">
           <div className="p-6 md:p-8 space-y-8 bg-gradient-to-b from-card to-muted/20">
 
-            {/* Section 1: Base Fields with GPS indicator */}
+            {/* Section 1: Basic Information */}
             <div className="space-y-4">
               <h3 className="text-lg font-display font-semibold flex items-center gap-2">
-                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm">1</span>
+                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">1</span>
                 Basic Information
-                {/* GPS Status indicator */}
                 {!isEdit && (
                   <span className={cn(
                     "ml-2 inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium",
                     gpsStatus === "loading" && "bg-yellow-100 text-yellow-700",
                     gpsStatus === "success" && "bg-green-100 text-green-700",
-                    gpsStatus === "error" || gpsStatus === "denied" ? "bg-red-100 text-red-600" : "",
+                    (gpsStatus === "error" || gpsStatus === "denied") && "bg-red-100 text-red-600",
                     gpsStatus === "idle" && "bg-muted text-muted-foreground",
                   )}>
-                    {gpsStatus === "loading" && <><Loader2 className="w-3 h-3 animate-spin" /> Getting GPS...</>}
-                    {gpsStatus === "success" && <><MapPin className="w-3 h-3" /> GPS captured</>}
-                    {gpsStatus === "denied" && <><MapPin className="w-3 h-3" /> Location denied</>}
-                    {gpsStatus === "error" && <><MapPin className="w-3 h-3" /> GPS unavailable</>}
+                    {gpsStatus === "loading" && <><Loader2 className="w-3 h-3 animate-spin" />Getting GPS...</>}
+                    {gpsStatus === "success" && <><MapPin className="w-3 h-3" />GPS captured</>}
+                    {gpsStatus === "denied" && <><MapPin className="w-3 h-3" />Location denied</>}
+                    {gpsStatus === "error" && <><MapPin className="w-3 h-3" />GPS unavailable</>}
                   </span>
                 )}
               </h3>
               <BaseFields register={register} errors={errors} />
-              {/* UTM display */}
               {(() => {
                 const coords = parseCoordsUTM(locationValue);
                 if (!coords) return null;
@@ -273,10 +292,10 @@ export default function SampleEntry() {
 
             <div className="h-px bg-border/60 w-full" />
 
-            {/* Section 2: Type-specific parameters */}
+            {/* Section 2: Type-specific Parameters */}
             <div className="space-y-4">
               <h3 className="text-lg font-display font-semibold flex items-center gap-2">
-                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm">2</span>
+                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">2</span>
                 Parameters
               </h3>
               <AnimatePresence mode="wait">
@@ -287,30 +306,80 @@ export default function SampleEntry() {
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
                 >
-                  {currentType === 'water' && <WaterFields register={register} />}
-                  {currentType === 'rock' && <RockFields register={register} onOpenCompass={() => setCompassOpen(true)} />}
-                  {currentType === 'soil_sand' && <SoilFields register={register} />}
+                  {currentType === "water" && <WaterFields register={register} />}
+                  {currentType === "rock" && <RockFields register={register} onOpenCompass={() => setCompassOpen(true)} />}
+                  {currentType === "soil_sand" && <SoilFields register={register} />}
                 </motion.div>
               </AnimatePresence>
             </div>
 
             <div className="h-px bg-border/60 w-full" />
 
-            {/* Section 3: Photo */}
+            {/* Section 3: Custom Parameters */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-display font-semibold flex items-center gap-2">
+                  <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">3</span>
+                  Custom Parameters
+                </h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={addCustomParam}
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Parameter
+                </Button>
+              </div>
+
+              {customParams.length === 0 ? (
+                <p className="text-sm text-muted-foreground italic px-1">
+                  No custom parameters on this sample. Click "Add Parameter" to create one specific to this sample sheet only.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {customParams.map((param) => (
+                    <div key={param.id} className="flex gap-2 items-start group">
+                      <GripVertical className="w-4 h-4 mt-2.5 text-muted-foreground/40 shrink-0" />
+                      <Input
+                        value={param.label}
+                        onChange={(e) => updateCustomParam(param.id, "label", e.target.value)}
+                        placeholder="Parameter name"
+                        className="w-40 shrink-0 text-sm"
+                      />
+                      <Input
+                        value={param.value}
+                        onChange={(e) => updateCustomParam(param.id, "value", e.target.value)}
+                        placeholder="Value (e.g. 7.2, Present, 42 mg/L)"
+                        className="flex-1 text-sm"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeCustomParam(param.id)}
+                        className="mt-2 p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="h-px bg-border/60 w-full" />
+
+            {/* Section 4: Photo */}
             <div className="space-y-4">
               <h3 className="text-lg font-display font-semibold flex items-center gap-2">
-                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm">3</span>
+                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">4</span>
                 Sample Photo
               </h3>
-
               <div className="flex flex-col sm:flex-row gap-4 items-start">
                 {photoDataUrl ? (
                   <div className="relative group">
-                    <img
-                      src={photoDataUrl}
-                      alt="Sample"
-                      className="w-40 h-40 object-cover rounded-xl border border-border shadow-md"
-                    />
+                    <img src={photoDataUrl} alt="Sample" className="w-40 h-40 object-cover rounded-xl border border-border shadow-md" />
                     <button
                       type="button"
                       onClick={() => setPhotoDataUrl(null)}
@@ -328,7 +397,6 @@ export default function SampleEntry() {
                     <span className="text-xs text-center px-2">Tap to add photo</span>
                   </div>
                 )}
-
                 <div className="flex flex-col gap-2">
                   <input
                     ref={fileInputRef}
@@ -357,10 +425,10 @@ export default function SampleEntry() {
 
             <div className="h-px bg-border/60 w-full" />
 
-            {/* Section 4: Folder & Notes */}
+            {/* Section 5: Organization */}
             <div className="space-y-4">
               <h3 className="text-lg font-display font-semibold flex items-center gap-2">
-                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm">4</span>
+                <span className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center text-sm font-bold">5</span>
                 Organization
               </h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -372,10 +440,9 @@ export default function SampleEntry() {
                     {...register("folderId")}
                   >
                     <option value="">Uncategorized</option>
-                    {folders?.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                    {folders?.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
                   </select>
                 </div>
-
                 <div className="space-y-2 md:col-span-2">
                   <Label htmlFor="notes">Field Notes</Label>
                   <Textarea
