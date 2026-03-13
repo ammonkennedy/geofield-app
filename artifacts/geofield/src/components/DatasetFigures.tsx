@@ -212,17 +212,85 @@ export function DatasetFigures({ samples, datasetName }: { samples: Sample[]; da
 
   const paramMeta = selectedParam ? NUMERIC_PARAMS[selectedParam] : null;
 
-  const downloadChart = async () => {
+  const downloadChart = () => {
     if (!chartContainerRef.current || !paramMeta) return;
+
+    // Find the actual Recharts SVG — NOT the button icons
+    const wrapper = chartContainerRef.current.querySelector(".recharts-wrapper");
+    const svg = wrapper
+      ? (wrapper.querySelector("svg") as SVGSVGElement | null)
+      : (chartContainerRef.current.querySelector(".recharts-surface") as SVGSVGElement | null);
+    if (!svg) return;
+
     setIsDownloading(true);
-    try {
-      const { default: html2canvas } = await import("html2canvas");
-      const canvas = await html2canvas(chartContainerRef.current, {
-        scale: 2,
-        backgroundColor: "#ffffff",
-        logging: false,
-        useCORS: true,
-      });
+
+    const scale = 2;
+    const rect = svg.getBoundingClientRect();
+    const W = Math.round(rect.width);
+    const H = Math.round(rect.height);
+    const PAD = 16;
+    const HEADER = 60;
+
+    const canvas = document.createElement("canvas");
+    canvas.width  = (W + PAD * 2) * scale;
+    canvas.height = (H + HEADER + PAD) * scale;
+    const ctx = canvas.getContext("2d")!;
+    ctx.scale(scale, scale);
+
+    // White background
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, W + PAD * 2, H + HEADER + PAD);
+
+    // Title + subtitle
+    const title = `${paramMeta.label}${paramMeta.unit ? ` (${paramMeta.unit})` : ""}`;
+    const subtitle = `${chartData.length} sample${chartData.length !== 1 ? "s" : ""}${datasetName ? ` — ${datasetName}` : ""}`;
+    ctx.fillStyle = "#111827";
+    ctx.font = "bold 15px -apple-system, sans-serif";
+    ctx.fillText(title, PAD, 22);
+    ctx.fillStyle = "#6b7280";
+    ctx.font = "12px -apple-system, sans-serif";
+    ctx.fillText(subtitle, PAD, 40);
+
+    // Stats row (right-aligned)
+    if (stats) {
+      const statsStr = `Min: ${stats.min}  Avg: ${stats.avg}  Max: ${stats.max}  n=${stats.n}`;
+      ctx.textAlign = "right";
+      ctx.fillText(statsStr, W + PAD, 40);
+      ctx.textAlign = "left";
+    }
+
+    // Thin divider line
+    ctx.strokeStyle = "#e5e7eb";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(PAD, 50);
+    ctx.lineTo(W + PAD, 50);
+    ctx.stroke();
+
+    // Serialize the SVG with proper dimensions so the browser renders it at full size
+    const clone = svg.cloneNode(true) as SVGSVGElement;
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", String(W));
+    clone.setAttribute("height", String(H));
+
+    // Inline background fill so it isn't transparent
+    const bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    bg.setAttribute("width", "100%");
+    bg.setAttribute("height", "100%");
+    bg.setAttribute("fill", "#ffffff");
+    clone.insertBefore(bg, clone.firstChild);
+
+    const svgBlob = new Blob(
+      [new XMLSerializer().serializeToString(clone)],
+      { type: "image/svg+xml;charset=utf-8" }
+    );
+    const url = URL.createObjectURL(svgBlob);
+    const img = new Image();
+
+    img.onload = () => {
+      ctx.drawImage(img, PAD, HEADER, W, H);
+      URL.revokeObjectURL(url);
+
       const fname = `${(datasetName || "dataset").replace(/[^a-zA-Z0-9]/g, "_")}_${paramMeta.label.replace(/[^a-zA-Z0-9]/g, "_")}_${chartType}.png`;
       const a = document.createElement("a");
       a.download = fname;
@@ -230,11 +298,15 @@ export function DatasetFigures({ samples, datasetName }: { samples: Sample[]; da
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-    } catch (err) {
-      console.error("Chart download failed", err);
-    } finally {
       setIsDownloading(false);
-    }
+    };
+
+    img.onerror = (e) => {
+      console.error("SVG render failed", e);
+      setIsDownloading(false);
+    };
+
+    img.src = url;
   };
 
   const stats = useMemo(() => {
